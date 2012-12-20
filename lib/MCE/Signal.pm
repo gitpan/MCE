@@ -16,7 +16,7 @@ BEGIN {
 use strict;
 use warnings;
 
-our $VERSION = '1.106';
+our $VERSION = '1.200';
 $VERSION = eval $VERSION;
 
 use Fcntl qw( :flock );
@@ -368,7 +368,7 @@ MCE::Signal - Provides tmp_dir creation & signal handling for Many-Core Engine.
 
 =head1 VERSION
 
-This document describes MCE::Signal version 1.106
+This document describes MCE::Signal version 1.200
 
 =head1 SYNOPSIS
 
@@ -394,7 +394,7 @@ Nothing is exported by default. Exportable are 1 variable and 2 subroutines:
  stop_and_exit     - Described below
  sys_cmd           - Described below
 
-=head2 stop_and_exit( [ $exit_status | $signal ] )
+=head2 stop_and_exit ( [ $exit_status | $signal ] )
 
  ## Stops execution, removes temp directory and exits the entire
  ## application. Pass 'TERM' if wanting to terminate a spawned or
@@ -403,7 +403,7 @@ Nothing is exported by default. Exportable are 1 variable and 2 subroutines:
  MCE::Signal::stop_and_exit(1);
  MCE::Signal::stop_and_exit('TERM');
 
-=head2 sys_cmd( $command )
+=head2 sys_cmd ( $command )
 
  ## Execute command and return the actual exit status. The calling
  ## process is also signaled if command caught SIGINT or SIGQUIT.

@@ -7,7 +7,7 @@
 
 <> VERSION
 
-   This document describes MCE version 1.106
+   This document describes MCE version 1.200
 
 ===============================================================================
 
@@ -28,6 +28,10 @@
 <> SYNOPSIS
 
    use MCE;
+
+   -------------------------------------------------------------------------
+   new ( options )
+   -------------------------------------------------------------------------
 
    ## A new instance shown with all available options.
 
@@ -116,6 +120,45 @@
 
           ## Flush sendto file, standard error, or standard output.
    );
+
+   -------------------------------------------------------------------------
+   USER_TASKS OPTION (new)
+   -------------------------------------------------------------------------
+
+   ## The 1.200 release introduces a new option to allow for flexible
+   ## workers. The "user_tasks" takes an array of tasks. Each task allows
+   ## for 5 options: max_workers, use_threads, user_begin, user_func, and
+   ## user_end. In addition, task_end can be specified for the manager
+   ## process to run when workers under task have completed processing.
+   ##
+   ## Forking and threading can be inter-mixed among tasks except under
+   ## CYGWIN. Input data (if defined) can only be processed by the first
+   ## task. The run method will remain running until all workers have
+   ## completed processing.
+   ##
+   ## Go here for further reading on the new user_tasks option.
+   ## http://code.google.com/p/many-core-engine-perl/wiki/MCE_Tasks
+
+   my $mce = MCE->new(
+      input_data => $list_file,
+
+      user_tasks => [{
+         max_workers => 2,
+         user_func   => \&parallel_task1,
+         use_threads => 0,
+         task_end    => sub {
+            print "Task 1 completed processing\n";
+         }
+
+      },{
+         max_workers => 4,
+         user_func   => \&parallel_task2,
+         use_threads => 1
+
+      }]
+   );
+
+   $mce->run();
 
    -------------------------------------------------------------------------
    RUNNING
@@ -225,12 +268,12 @@
 
 ===============================================================================
 
-<> METHODS for BOTH MAIN PROCESS & WORKERS
+<> METHODS for MANAGER PROCESS & WORKERS
 
    Methods listed below are callable by the main process and workers.
 
    -------------------------------------------------------------------------
-   abort( void )
+   abort ( void )
    -------------------------------------------------------------------------
 
    ## Notifies workers to abort after processing the current chunk.
@@ -239,7 +282,7 @@
    $self->abort();
 
    -------------------------------------------------------------------------
-   wid( void )
+   wid ( void )
    -------------------------------------------------------------------------
 
    ## Returns the worker ID of worker.
@@ -248,12 +291,12 @@
 
 ===============================================================================
 
-<> METHODS for MAIN PROCESS ONLY
+<> METHODS for MANAGER PROCESS ONLY
 
    Methods listed below are callable by the main process only.
 
    -------------------------------------------------------------------------
-   forchunk( $input_data [, { options } ], sub { ... } )
+   forchunk ( $input_data [, { options } ], sub { ... } )
    -------------------------------------------------------------------------
 
    ## Both forchunk & foreach are sugar methods in MCE. Workers are
@@ -286,7 +329,7 @@
    });
 
    -------------------------------------------------------------------------
-   foreach( $input_data [, { options } ], sub { ... } )
+   foreach ( $input_data [, { options } ], sub { ... } )
    -------------------------------------------------------------------------
 
    ## Foreach always implies chunk_size => 1 (cannot be overwritten).
@@ -323,7 +366,7 @@
    });
 
    -------------------------------------------------------------------------  
-   process( $input_data [, { options } ] )
+   process ( $input_data [, { options } ] )
    -------------------------------------------------------------------------
 
    ## The process method will spawn workers automatically if not already
@@ -348,7 +391,7 @@
    $mce->shutdown();
 
    -------------------------------------------------------------------------  
-   run( [ $auto_shutdown ] [, { options } ] )
+   run ( [ $auto_shutdown ] [, { options } ] )
    -------------------------------------------------------------------------
 
    ## The run method, by default, spawns workers, processes once,
@@ -363,7 +406,7 @@
    $mce->run(0);                         ## Disables auto-shutdown
 
    -------------------------------------------------------------------------
-   shutdown( void )
+   shutdown ( void )
    -------------------------------------------------------------------------
 
    ## The run method will automatically spawn workers, run once, and
@@ -386,7 +429,7 @@
    $mce->shutdown();
 
    -------------------------------------------------------------------------
-   spawn( void )
+   spawn ( void )
    -------------------------------------------------------------------------
 
    ## Workers are normally spawned automatically. The spawn method is
@@ -403,7 +446,7 @@
    Methods listed below are callable by workers only.
 
    -------------------------------------------------------------------------
-   do( 'callback_func' [, $arg1, ... ] )
+   do ( 'callback_func' [, $arg1, ... ] )
    -------------------------------------------------------------------------
 
    ## MCE can serialized data transfers from worker processes via
@@ -433,7 +476,7 @@
    my $scalar = $self->do('callback' [, $arg1, ... ]);
 
    -------------------------------------------------------------------------
-   exit( void )
+   exit ( void )
    -------------------------------------------------------------------------
 
    ## The worker exits the current job.
@@ -441,7 +484,7 @@
    $self->exit();
 
    -------------------------------------------------------------------------  
-   last( void )
+   last ( void )
    -------------------------------------------------------------------------
 
    ## Worker immediately exits the chunking loop or user func.
@@ -475,7 +518,7 @@
    8
 
    -------------------------------------------------------------------------  
-   next( void )
+   next ( void )
    -------------------------------------------------------------------------
 
    ## Worker starts the next iteration of the chunking loop.
@@ -505,7 +548,7 @@
    80
 
    -------------------------------------------------------------------------
-   sendto( 'to_string', $arg1, ... )
+   sendto ( 'to_string', $arg1, ... )
    -------------------------------------------------------------------------
 
    The sendto method is called by workers to serialize data to standard output,
@@ -568,6 +611,9 @@
    parallelizing something as small as cat (try with -n) to greping for
    patterns and word count aggregation.
 
+   -------------------------------------------------------------------------
+   INCLUDED WITH DISTRIBUTION
+   -------------------------------------------------------------------------
    cat.pl    Concatenation script, similar to the cat binary.
    egrep.pl  Egrep script, similar to the egrep binary.
    wc.pl     Word count script, similar to the wc binary.
@@ -753,7 +799,7 @@
    });
 
    -------------------------------------------------------------------------
-   MULTIPLE WORKERS RUNNING IN PARALLEL (NO INPUT_DATA)
+   MULTIPLE WORKERS RUNNING IN PARALLEL (no input_data)
    -------------------------------------------------------------------------
 
    The input_data option is optional. One can simply use MCE to parallelize
