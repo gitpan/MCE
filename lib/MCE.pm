@@ -6,6 +6,15 @@
 
 package MCE;
 
+use strict;
+use warnings;
+
+use Fcntl qw( :flock O_CREAT O_TRUNC O_RDWR O_RDONLY );
+use Storable 2.04 qw( store retrieve freeze thaw );
+use Socket qw( :DEFAULT :crlf );
+
+use MCE::Signal;
+
 my ($_que_template, $_que_read_size);
 my ($_has_threads, $_max_files, $_max_procs);
 
@@ -35,8 +44,8 @@ BEGIN {
          $_max_files = $1 || 256;
          $_max_procs = $2 || 256;
 
-         $_max_files = ($_max_files =~ /\A\d+\z/) ? $_max_files : 3152;
-         $_max_procs = ($_max_procs =~ /\A\d+\z/) ? $_max_procs :  788;
+         $_max_files = ($_max_files =~ /\A\d+\z/) ? $_max_files : 256;
+         $_max_procs = ($_max_procs =~ /\A\d+\z/) ? $_max_procs : 256;
       }
       else {
          $_max_files = $_max_procs = 256;
@@ -61,7 +70,6 @@ our $_MCE_LOCK : shared = 1;
 
 INIT {
    unless (defined $_has_threads) {
-
       if (defined $threads::VERSION) {
          unless (defined $threads::shared::VERSION) {
             local $@; local $SIG{__DIE__} = \&_NOOP;
@@ -69,22 +77,12 @@ INIT {
          }
          $_has_threads = 1;
       }
-
       $_has_threads = $_has_threads || 0;
    }
 }
 
-use strict;
-use warnings;
-
-our $VERSION = '1.201';
+our $VERSION = '1.201_001';
 $VERSION = eval $VERSION;
-
-use Fcntl qw( :flock O_CREAT O_TRUNC O_RDWR O_RDONLY );
-use Storable 2.04 qw( store retrieve freeze thaw );
-use Socket qw( :DEFAULT :crlf );
-
-use MCE::Signal;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -103,10 +101,8 @@ use constant {
    QUE_TEMPLATE     => $_que_template,   ## Pack template for queue socket
    QUE_READ_SIZE    => $_que_read_size,  ## Read size
 
-   OUTPUT_W_EXT     => ':W~EXT',         ## Worker has exited job
    OUTPUT_W_DNE     => ':W~DNE',         ## Worker has completed job
-   OUTPUT_W_END     => ':W~END',         ## Worker has ended prematurely
-
+   OUTPUT_W_EXT     => ':W~EXT',         ## Worker has exited
    OUTPUT_A_ARY     => ':A~ARY',         ## Array  << Array
    OUTPUT_S_GLB     => ':S~GLB',         ## Scalar << Glob FH
    OUTPUT_A_CBK     => ':A~CBK',         ## Callback (/w arguments)
@@ -141,16 +137,19 @@ my %_valid_fields = map { $_ => 1 } qw(
    flush_file flush_stderr flush_stdout stderr_file stdout_file
    job_delay spawn_delay submit_delay tmp_dir user_tasks task_end
    user_begin user_end user_func user_error user_output
+   on_exit_post on_run_post
 
-   _mce_sid _mce_tid _pids _sess_dir _spawned _task0_max_workers _tids _wid
+   _mce_sid _mce_tid _pids _sess_dir _spawned _task0_max_workers _thrs _tids
    _com_r_sock _com_w_sock _dat_r_sock _dat_w_sock _out_r_sock _out_w_sock
-   _que_r_sock _que_w_sock _abort_msg _run_mode _single_dim _task_id
+   _que_r_sock _que_w_sock _abort_msg _run_mode _single_dim _task_id _wid
+   _exiting _exit_pid _state _status _total_exited _total_workers
 );
 
 my %_params_allowed_args = map { $_ => 1 } qw(
    chunk_size input_data job_delay spawn_delay submit_delay use_slurpio
    flush_file flush_stderr flush_stdout stderr_file stdout_file
    user_begin user_end user_func user_error user_output
+   on_exit_post on_run_post
 );
 
 my $_is_cygwin   = ($^O eq 'cygwin');
@@ -181,7 +180,7 @@ sub new {
 
    my $self = { };
 
-   bless $self, $class;
+   bless($self, ref($class) || $class);
 
    ## Public options.
    $self->{tmp_dir}      = $argv{tmp_dir}      || $_mce_tmp_dir;
@@ -192,7 +191,6 @@ sub new {
 
    if (exists $argv{use_threads}) {
       $self->{use_threads} = $argv{use_threads};
-
       if (!$_has_threads && $argv{use_threads} ne '0') {
          my $_msg  = "\n";
             $_msg .= "## Please include threads support prior to loading MCE\n";
@@ -212,6 +210,8 @@ sub new {
    $self->{job_delay}    = $argv{job_delay}    || undef;
    $self->{spawn_delay}  = $argv{spawn_delay}  || undef;
    $self->{submit_delay} = $argv{submit_delay} || undef;
+   $self->{on_exit_post} = $argv{on_exit_post} || undef;
+   $self->{on_run_post}  = $argv{on_run_post}  || undef;
    $self->{user_begin}   = $argv{user_begin}   || undef;
    $self->{user_func}    = $argv{user_func}    || undef;
    $self->{user_end}     = $argv{user_end}     || undef;
@@ -222,7 +222,6 @@ sub new {
    $self->{flush_stdout} = $argv{flush_stdout} || 0;
    $self->{stderr_file}  = $argv{stderr_file}  || undef;
    $self->{stdout_file}  = $argv{stdout_file}  || undef;
-
    $self->{user_tasks}   = $argv{user_tasks}   || undef;
    $self->{task_end}     = $argv{task_end}     || undef;
 
@@ -242,8 +241,11 @@ sub new {
    %argv = ();
 
    ## Private options.
-   @{ $self->{_pids} }  = ();    ## Array for joining children when completed
-   @{ $self->{_tids} }  = ();    ## Array for joining threads when completed
+   $self->{_pids}       = undef; ## Array for joining children when completed
+   $self->{_thrs}       = undef; ## Array for joining threads when completed
+   $self->{_tids}       = undef; ## Array for joining threads when completed
+   $self->{_status}     = undef; ## Array of Hashes to hold $self->exit data
+   $self->{_exit_pid}   = undef; ## Worker exit ID e.g. TID_123, PID_1234
    $self->{_mce_sid}    = undef; ## Spawn ID defined at time of spawning
    $self->{_mce_tid}    = undef; ## Thread ID when spawn was called
    $self->{_sess_dir}   = undef; ## Unique session dir when spawn was called
@@ -257,6 +259,7 @@ sub new {
    $self->{_out_w_sock} = undef; ## Workers write to this for serialized writes
    $self->{_que_r_sock} = undef; ## Queue channel for MCE
    $self->{_que_w_sock} = undef; ## Queue channel for workers
+   $self->{_state}      = undef; ## State info: worker (task_id/task/params)
 
    ## -------------------------------------------------------------------------
 
@@ -309,8 +312,7 @@ sub spawn {
    ## To avoid leaking (Scalars leaked: 1) messages (fixed in Perl 5.12.x).
    @_ = ();
 
-   ## Croak if method was called by a MCE worker.
-   _croak("MCE::spawn: method cannot be called by a MCE worker")
+   _croak("MCE::spawn: method cannot be called by the worker process")
       if ($self->wid());
 
    ## Return if workers have already been spawned.
@@ -320,10 +322,6 @@ sub spawn {
 
    my $_die_handler  = $SIG{__DIE__};  $SIG{__DIE__}  = \&_die;
    my $_warn_handler = $SIG{__WARN__}; $SIG{__WARN__} = \&_warn;
-
-   ## Delay spawning.
-   select(undef, undef, undef, $self->{spawn_delay})
-      if ($self->{spawn_delay} && $self->{spawn_delay} > 0.0);
 
    ## Configure tid/sid for this instance here, not in the new method above.
    ## We want the actual thread id in which spawn was called under.
@@ -411,14 +409,16 @@ sub spawn {
 
    my $_wid = 0;
 
-   @{ $self->{_pids} } = ();
-   @{ $self->{_tids} } = ();
+   $self->{_pids}   = (); $self->{_thrs}  = (); $self->{_tids} = ();
+   $self->{_status} = (); $self->{_state} = ();
 
    ## Obtain lock.
    open my $_COM_LOCK, '+>> :stdio', "$_sess_dir/com.lock";
    flock $_COM_LOCK, LOCK_EX;
 
    ## Spawn workers.
+   $_mce_spawned{$_mce_sid} = $self;
+
    unless (defined $self->{user_tasks}) {
       if (defined $_use_threads && $_use_threads == 1) {
          $self->_dispatch_thread(++$_wid) for (1 .. $_max_workers);
@@ -427,6 +427,13 @@ sub spawn {
       }
 
       $self->{_task0_max_workers} = $_max_workers;
+      $_wid = 0;
+
+      for (1 .. $_max_workers) {
+         $self->{_state}->[++$_wid] = {
+            _task_id => undef, _task => undef, _params => undef
+         }
+      }
    }
    else {
       if ($_is_cygwin) {
@@ -439,6 +446,7 @@ sub spawn {
                ? $_task->{use_threads} : $self->{use_threads};
             $_values{$_value} = '';
          }
+
          _croak("MCE::spawn: 'cannot mix' use_threads => 0/1 in Cygwin")
             if (keys %_values > 1);
       }
@@ -464,6 +472,16 @@ sub spawn {
       }
 
       $self->{_task0_max_workers} = $self->{user_tasks}->[0]->{max_workers};
+      $_wid = $_task_id = 0;
+
+      for my $_task (@{ $self->{user_tasks} }) {
+         for (1 .. $_task->{max_workers}) {
+            $self->{_state}->[++$_wid] = {
+               _task_id => $_task_id, _task => $_task, _params => undef
+            }
+         }
+         $_task_id++;
+      }
    }
 
    ## Release lock.
@@ -474,7 +492,6 @@ sub spawn {
    $SIG{__WARN__} = $_warn_handler;
 
    ## Update max workers spawned.
-   $_mce_spawned{$_mce_sid} = $self;
    $self->{max_workers} = $_wid;
    $self->{_spawned} = 1;
 
@@ -492,8 +509,7 @@ sub foreach {
    my MCE $self    = $_[0];
    my $_input_data = $_[1];
 
-   ## Croak if method was called by a MCE worker.
-   _croak("MCE::foreach: method cannot be called by a MCE worker")
+   _croak("MCE::foreach: method cannot be called by the worker process")
       if ($self->wid());
 
    ## Parse args.
@@ -535,8 +551,7 @@ sub forchunk {
    my MCE $self    = $_[0];
    my $_input_data = $_[1];
 
-   ## Croak if method was called by a MCE worker.
-   _croak("MCE::forchunk: method cannot be called by a MCE worker")
+   _croak("MCE::forchunk: method cannot be called by the worker process")
       if ($self->wid());
 
    ## Parse args.
@@ -580,8 +595,7 @@ sub process {
 
    @_ = ();
 
-   ## Croak if method was called by a MCE worker.
-   _croak("MCE::process: method cannot be called by a MCE worker")
+   _croak("MCE::process: method cannot be called by the worker process")
       if ($self->wid());
 
    ## Set input data.
@@ -600,6 +614,45 @@ sub process {
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
+## Restart Worker Routine.
+##
+###############################################################################
+
+sub restart_worker {
+
+   my MCE $self = $_[0];
+   my $_wid     = $_[1];
+
+   _croak("MCE::restart_worker: method cannot be called by the worker process")
+      if ($self->wid());
+
+   @_ = ();
+
+   _croak("MCE::restart_worker: 'wid' is not specified")
+      unless (defined $_wid);
+   _croak("MCE::restart_worker: 'wid' is not valid")
+      unless (defined $self->{_state}->[$_wid]);
+
+   my $_params  = $self->{_state}->[$_wid]->{_params};
+   my $_task_id = $self->{_state}->[$_wid]->{_task_id};
+   my $_task    = $self->{_state}->[$_wid]->{_task};
+
+   my $_use_threads = (defined $_task->{use_threads})
+      ? $_task->{use_threads} : $self->{use_threads};
+
+   if (defined $_use_threads && $_use_threads == 1) {
+      $self->_dispatch_thread($_wid, $_task, $_task_id, $_params);
+      $self->{_total_exited} -= 1; $self->{_total_workers} += 1;
+   } else {
+      $self->_dispatch_child($_wid, $_task, $_task_id, $_params);
+      $self->{_total_exited} -= 1; $self->{_total_workers} += 1;
+   }
+
+   return;
+}
+
+###############################################################################
+## ----------------------------------------------------------------------------
 ## Run Routine.
 ##
 ###############################################################################
@@ -608,8 +661,7 @@ sub run {
 
    my MCE $self = $_[0];
 
-   ## Croak if method was called by a MCE worker.
-   _croak("MCE::run: method cannot be called by a MCE worker")
+   _croak("MCE::run: method cannot be called by the worker process")
       if ($self->wid());
 
    ## Parse args.
@@ -651,10 +703,6 @@ sub run {
 
    local $SIG{__DIE__}  = \&_die;
    local $SIG{__WARN__} = \&_warn;
-
-   ## Delay job.
-   select(undef, undef, undef, $self->{job_delay})
-      if ($self->{job_delay} && $self->{job_delay} > 0.0);
 
    ## Local vars.
    my ($_input_data, $_input_file, $_input_glob);
@@ -766,8 +814,10 @@ sub run {
 
          if ($_wid <= $self->{_task0_max_workers}) {
             print $_COM_R_SOCK length($_frozen_params), $LF, $_frozen_params;
+            $self->{_state}->[$_wid]->{_params} = \%_params;
          } else {
             print $_COM_R_SOCK length($_frozen_nodata), $LF, $_frozen_nodata;
+            $self->{_state}->[$_wid]->{_params} = \%_params_nodata;
          }
 
          <$_COM_R_SOCK>;
@@ -818,8 +868,7 @@ sub shutdown {
 
    @_ = ();
 
-   ## Croak if method was called by a MCE worker.
-   _croak("MCE::shutdown: method cannot be called by a MCE worker")
+   _croak("MCE::shutdown: method cannot be called by the worker process")
       if ($self->wid());
 
    ## Return if workers have not been spawned or have already been shutdown.
@@ -847,7 +896,9 @@ sub shutdown {
    open my $_DAT_LOCK, '+>> :stdio', "$_sess_dir/dat.lock";
    flock $_DAT_LOCK, LOCK_EX;
 
-   for (1 .. $_max_workers) {
+   my $_total_exited = $self->{_total_exited} || 0;
+
+   for (1 .. $_max_workers - $_total_exited) {
       print $_COM_R_SOCK "_exit${LF}";
       <$_COM_R_SOCK>;
    }
@@ -855,8 +906,18 @@ sub shutdown {
    flock $_DAT_LOCK, LOCK_UN;
 
    ## Reap children/threads.
-   waitpid $_, 0 for ( @{ $self->{_pids} } );
-   $_->join()    for ( @{ $self->{_tids} } );
+   if ( $self->{_pids} && @{ $self->{_pids} } > 0 ) {
+      my $_list = $self->{_pids};
+      for my $i (0 .. @$_list) {
+         waitpid $_list->[$i], 0 if ($_list->[$i]);
+      }
+   }
+   if ( $self->{_thrs} && @{ $self->{_thrs} } > 0 ) {
+      my $_list = $self->{_thrs};
+      for my $i (0 .. @$_list) {
+         ${ $_list->[$i] }->join() if ($_list->[$i]);
+      }
+   }
 
    close $_DAT_LOCK; undef $_DAT_LOCK;
 
@@ -889,6 +950,11 @@ sub shutdown {
    }
 
    ## Reset vars.
+   $self->{_total_exited} = $self->{_total_workers} = 0;
+
+   $self->{_pids}   = (); $self->{_thrs}  = (); $self->{_tids} = ();
+   $self->{_status} = (); $self->{_state} = ();
+
    $self->{_out_r_sock} = $self->{_out_w_sock} = undef;
    $self->{_que_r_sock} = $self->{_que_w_sock} = undef;
    $self->{_com_r_sock} = $self->{_com_w_sock} = undef;
@@ -897,9 +963,6 @@ sub shutdown {
    $self->{_mce_sid}    = $self->{_mce_tid}    = undef;
    $self->{_spawned}    = $self->{_wid}        = 0;
    $self->{_sess_dir}   = undef;
-
-   @{ $self->{_pids} }  = ();
-   @{ $self->{_tids} }  = ();
 
    return $self;
 }
@@ -935,45 +998,53 @@ sub abort {
 
 sub exit {
 
-   my MCE $self = $_[0];
+   my MCE $self     = $_[0];
+   my $_exit_status = (defined $_[1]) ? $_[1] : $?;
+   my $_exit_msg    = (defined $_[2]) ? $_[2] : '';
+   my $_exit_id     = (defined $_[3]) ? $_[3] : '';
 
    @_ = ();
 
-   _croak("MCE::exit: method cannot be called by the main MCE process")
+   _croak("MCE::exit: method cannot be called by the manager process")
       unless ($self->wid());
-
-   my $_OUT_W_SOCK = $self->{_out_w_sock};
-   my $_DAT_W_SOCK = $self->{_dat_w_sock};
-   my $_task_id    = $self->{_task_id};
-
-   local $\ = undef;
-   print $_OUT_W_SOCK OUTPUT_W_EXT, $LF;
-
-   unless (defined $_task_id) {
-      print $_OUT_W_SOCK OUTPUT_W_DNE, $LF;
-   }
-   else {
-      flock $_DAT_LOCK, LOCK_EX;
-      print $_OUT_W_SOCK OUTPUT_W_DNE, $LF;
-      print $_DAT_W_SOCK $_task_id, $LF;
-      flock $_DAT_LOCK, LOCK_UN;
-   }
-
-   ## Enter loop and wait for exit notification.
-   $self->_worker_loop();
 
    $SIG{__DIE__} = $SIG{__WARN__} = sub { };
 
-   eval {
-      flock $_DAT_LOCK, LOCK_SH;
-      flock $_DAT_LOCK, LOCK_UN;
-      close $_DAT_LOCK; undef $_DAT_LOCK;
-      close $_COM_LOCK; undef $_COM_LOCK;
-   };
+   unless ($self->{_exiting}) {
+      $self->{_exiting} = 1;
+
+      my $_DAT_W_SOCK = $self->{_dat_w_sock};
+      my $_OUT_W_SOCK = $self->{_out_w_sock};
+      my $_task_id    = $self->{_task_id};
+
+      if (defined $_DAT_LOCK) {
+         my $_len = length($_exit_msg);
+
+         local $\ = undef;
+         flock $_DAT_LOCK, LOCK_EX;
+
+         print $_OUT_W_SOCK OUTPUT_W_EXT,  $LF;
+         print $_DAT_W_SOCK $self->wid(),  $LF, $self->{_exit_pid}, $LF,
+                            $_exit_status, $LF, $_exit_id,          $LF,
+                            $_len,         $LF;
+
+         print $_DAT_W_SOCK $_exit_msg          if ($_len);
+
+         print $_OUT_W_SOCK OUTPUT_W_DNE,  $LF;
+         print $_DAT_W_SOCK $_task_id,     $LF  if (defined $_task_id);
+
+         delete $_mce_spawned{ $self->{_mce_sid} };
+         flock $_DAT_LOCK, LOCK_UN;
+      }
+   }
 
    ## Exit thread/child process.
-   threads->exit() if ($_has_threads && threads->can('exit'));
-   CORE::exit();
+   threads->exit($_exit_status) if ($_has_threads && threads->can('exit'));
+
+   close STDERR; close STDOUT;
+   kill 9, $$ unless ($_is_winperl);
+
+   CORE::exit($_exit_status);
 }
 
 ## Worker immediately exits the chunking loop.
@@ -984,7 +1055,7 @@ sub last {
 
    @_ = ();
 
-   _croak("MCE::last: method cannot be called by the main MCE process")
+   _croak("MCE::last: method cannot be called by the manager process")
       unless ($self->wid());
 
    $self->{_last_jmp}() if (defined $self->{_last_jmp});
@@ -1000,7 +1071,7 @@ sub next {
 
    @_ = ();
 
-   _croak("MCE::next: method cannot be called by the main MCE process")
+   _croak("MCE::next: method cannot be called by the manager process")
       unless ($self->wid());
 
    $self->{_next_jmp}() if (defined $self->{_next_jmp});
@@ -1032,7 +1103,7 @@ sub do {
    my MCE $self  = shift;
    my $_callback = shift;
 
-   _croak("MCE::do: method cannot be called by the main MCE process")
+   _croak("MCE::do: method cannot be called by the manager process")
       unless ($self->wid());
 
    _croak("MCE::do: 'callback' is not specified")
@@ -1060,7 +1131,7 @@ sub do {
       my MCE $self = shift;
       my $_to      = shift;
 
-      _croak("MCE::sendto: method cannot be called by the main MCE process")
+      _croak("MCE::sendto: method cannot be called by the manager process")
          unless ($self->wid());
 
       return unless (defined $_[0]);
@@ -1193,6 +1264,10 @@ sub _validate_args {
    _croak "$_tag: 'submit_delay' is not valid"
       if ($_s->{submit_delay} && $_s->{submit_delay} !~ /\A[\d\.]+\z/);
 
+   _croak "$_tag: 'on_exit_post' is not a CODE reference"
+      if ($_s->{on_exit_post} && ref $_s->{on_exit_post} ne 'CODE');
+   _croak "$_tag: 'on_run_post' is not a CODE reference"
+      if ($_s->{on_run_post} && ref $_s->{on_run_post} ne 'CODE');
    _croak "$_tag: 'user_begin' is not a CODE reference"
       if ($_s->{user_begin} && ref $_s->{user_begin} ne 'CODE');
    _croak "$_tag: 'user_func' is not a CODE reference"
@@ -1216,6 +1291,8 @@ sub _validate_args {
          if ($_s->{user_tasks} && ref $_s->{user_tasks} ne 'ARRAY');
 
       for my $_t (@{ $_s->{user_tasks} }) {
+         $_t->{max_workers} = $_s->{max_workers} unless ($_t->{max_workers});
+
          _croak "$_tag: 'max_workers' is not valid"
             if ($_t->{max_workers} !~ /\A\d+\z/ or $_t->{max_workers} == 0);
          _croak "$_tag: 'use_threads' is not 0 or 1"
@@ -1437,22 +1514,18 @@ sub _validate_args {
    my ($_callback, $_file, %_sendto_fhs, $_len);
 
    my ($_DAT_R_SOCK, $_OUT_R_SOCK, $_MCE_STDERR, $_MCE_STDOUT);
-   my ($_I_SEP, $_O_SEP, $_total_ended, $_input_glob, $_chunk_size);
+   my ($_I_SEP, $_O_SEP, $_input_glob, $_chunk_size);
    my ($_input_size, $_offset_pos, $_single_dim, $_use_slurpio);
 
-   my ($_total_exited, $_has_user_tasks, $_task_id, @_task_max_workers);
+   my ($_has_user_tasks, $_task_id, @_task_max_workers);
+   my ($_exit_wid, $_exit_pid, $_exit_status, $_exit_id);
+   my ($_on_exit_post, $_on_run_post);
 
    ## Create hash structure containing various output functions.
    my %_output_function = (
 
-      OUTPUT_W_EXT.$LF => sub {                   ## Worker has exited job
-         $_total_exited += 1;
-
-         return;
-      },
-
       OUTPUT_W_DNE.$LF => sub {                   ## Worker has completed job
-         $_total_workers -= 1;
+         $self->{_total_workers} -= 1;
 
          if ($_has_user_tasks) {
             chomp($_task_id = <$_DAT_R_SOCK>);
@@ -1468,9 +1541,60 @@ sub _validate_args {
          return;
       },
 
-      OUTPUT_W_END.$LF => sub {                   ## Worker has ended
-         $_total_workers -= 1;                    ## prematurely
-         $_total_ended   += 1;
+      ## ----------------------------------------------------------------------
+
+      OUTPUT_W_EXT.$LF => sub {                   ## Worker has exited
+         $self->{_total_exited} += 1;
+         my $_exit_msg = '';
+
+         chomp($_exit_wid    = <$_DAT_R_SOCK>);
+         chomp($_exit_pid    = <$_DAT_R_SOCK>);
+         chomp($_exit_status = <$_DAT_R_SOCK>);
+         chomp($_exit_id     = <$_DAT_R_SOCK>);
+         chomp($_len         = <$_DAT_R_SOCK>);
+
+         read $_DAT_R_SOCK, $_exit_msg, $_len if ($_len);
+
+         ## Reap child/thread. Note: Win32 uses negative PIDs.
+         if ($_exit_pid =~ /^PID_(-?\d+)/) {
+            my $_pid = $1; my $_list = $self->{_pids};
+            for my $i (0 .. @$_list) {
+               if ($_list->[$i] && $_list->[$i] == $_pid) {
+                  waitpid $_pid, 0;
+                  $self->{_pids}->[$i] = undef;
+                  last;
+               }
+            }
+         }
+         elsif ($_exit_pid =~ /^TID_(\d+)/) {
+            my $_tid = $1; my $_list = $self->{_tids};
+            for my $i (0 .. @$_list) {
+               if ($_list->[$i] && $_list->[$i] == $_tid) {
+                  ${ $self->{_thrs}->[$i] }->join();
+                  $self->{_thrs}->[$i] = undef;
+                  $self->{_tids}->[$i] = undef;
+                  last;
+               }
+            }
+         }
+
+         ## Call on_exit_post callback if defined. Otherwise, append status
+         ## information if on_run_post is defined for later retrieval.
+         if (defined $_on_exit_post) {
+            $_on_exit_post->(
+               $self, $_exit_wid, $_exit_pid, $_exit_status,
+               $_exit_msg, $_exit_id
+            );
+         }
+         elsif (defined $_on_run_post) {
+            push @{ $self->{_status} }, {
+               wid    => $_exit_wid,
+               pid    => $_exit_pid,
+               status => $_exit_status,
+               msg    => $_exit_msg,
+               id     => $_exit_id
+            };
+         }
 
          return;
       },
@@ -1739,16 +1863,20 @@ sub _validate_args {
 
       die "Private method called" unless (caller)[0]->isa( ref($self) );
 
-      $_chunk_size  = $self->{chunk_size};
-      $_flush_file  = $self->{flush_file};
-      $_max_workers = $self->{max_workers};
-      $_use_slurpio = $self->{use_slurpio};
-      $_user_output = $self->{user_output};
-      $_user_error  = $self->{user_error};
-      $_single_dim  = $self->{_single_dim};
+      $_on_exit_post = $self->{on_exit_post};
+      $_on_run_post  = $self->{on_run_post};
+      $_chunk_size   = $self->{chunk_size};
+      $_flush_file   = $self->{flush_file};
+      $_max_workers  = $self->{max_workers};
+      $_use_slurpio  = $self->{use_slurpio};
+      $_user_output  = $self->{user_output};
+      $_user_error   = $self->{user_error};
+      $_single_dim   = $self->{_single_dim};
 
-      $_total_ended = $_total_exited = $_eof_flag = 0;
       $_has_user_tasks = (defined $self->{user_tasks});
+
+      $self->{_total_workers} = $_total_workers;
+      $self->{_total_exited} = $_eof_flag = 0;
 
       if ($_has_user_tasks) {
          push @_task_max_workers, $_->{max_workers} for (
@@ -1816,9 +1944,12 @@ sub _validate_args {
 
          if (exists $_output_function{$_func}) {
             $_output_function{$_func}();
-            last unless ($_total_workers);
+            last unless ($self->{_total_workers});
          }
       }
+
+      ## Call on_run_post callback.
+      $_on_run_post->($self, $self->{_status}) if (defined $_on_run_post);
 
       @_task_max_workers = undef if ($_has_user_tasks);
 
@@ -1829,23 +1960,14 @@ sub _validate_args {
          delete $_sendto_fhs{$_};
       }
 
-      ## Restore the default handle.
+      ## Restore the default handle. Close MCE STDOUT/STDERR handles.
       select $_old_hndl;
 
-      ## Close MCE STDOUT/STDERR handles.
       close $_MCE_STDOUT; undef $_MCE_STDOUT;
       close $_MCE_STDERR; undef $_MCE_STDERR;
 
-      ## Shutdown all workers if one or more have exited.
-      if ($_total_exited > 0 && $_total_ended == 0) {
-         $self->shutdown();
-      }
-
-      ## Shutdown all workers if one or more have ended prematurely.
-      if ($_total_ended > 0) {
-         warn("[ $_total_ended ] workers ended prematurely\n");
-         $self->shutdown();
-      }
+      ## Shutdown remaining workers if one or more have exited.
+      $self->shutdown() if ($self->{_total_exited} > 0);
 
       return;
    }
@@ -2154,20 +2276,20 @@ sub _worker_do {
    my $_user_end    = $self->{user_end};
 
    ## Call user_begin if defined.
-   $_user_begin->($self) if ($_user_begin);
+   $_user_begin->($self) if (defined $_user_begin);
 
    ## Call worker function.
    if ($_run_mode eq 'array') {
-      _worker_request_chunk($self, REQUEST_ARRAY);
+      $self->_worker_request_chunk(REQUEST_ARRAY);
    }
    elsif ($_run_mode eq 'glob') {
-      _worker_request_chunk($self, REQUEST_GLOB);
+      $self->_worker_request_chunk(REQUEST_GLOB);
    }
    elsif ($_run_mode eq 'file') {
-      _worker_read_handle($self, READ_FILE, $_params_ref->{_input_file});
+      $self->_worker_read_handle(READ_FILE, $_params_ref->{_input_file});
    }
    elsif ($_run_mode eq 'memory') {
-      _worker_read_handle($self, READ_MEMORY, $self->{input_data});
+      $self->_worker_read_handle(READ_MEMORY, $self->{input_data});
    }
    else {
       $_user_func->($self);
@@ -2177,20 +2299,16 @@ sub _worker_do {
    undef $self->{_last_jmp} if (defined $self->{_last_jmp});
 
    ## Call user_end if defined.
-   $_user_end->($self) if ($_user_end);
+   $_user_end->($self) if (defined $_user_end);
 
    ## Notify the main process a worker has completed.
    local $\ = undef;
+   flock $_DAT_LOCK, LOCK_EX;
 
-   unless (defined $_task_id) {
-      print $_OUT_W_SOCK OUTPUT_W_DNE, $LF;
-   }
-   else {
-      flock $_DAT_LOCK, LOCK_EX;
-      print $_OUT_W_SOCK OUTPUT_W_DNE, $LF;
-      print $_DAT_W_SOCK $_task_id, $LF;
-      flock $_DAT_LOCK, LOCK_UN;
-   }
+   print $_OUT_W_SOCK OUTPUT_W_DNE, $LF;
+   print $_DAT_W_SOCK $_task_id,    $LF  if (defined $_task_id);
+
+   flock $_DAT_LOCK, LOCK_UN;
 
    return;
 }
@@ -2210,8 +2328,10 @@ sub _worker_loop {
    die "Private method called" unless (caller)[0]->isa( ref($self) );
 
    my ($_response, $_len, $_buffer, $_params_ref);
+
    my $_COM_W_SOCK = $self->{_com_w_sock};
-   my $_wid = $self->{_wid};
+   my $_job_delay  = $self->{job_delay};
+   my $_wid        = $self->{_wid};
  
    while (1) {
 
@@ -2253,25 +2373,19 @@ sub _worker_loop {
 
       ## Update ID. Process request.
       $self->{_wid} = $_response unless (defined $self->{user_tasks});
-      _worker_do($self, $_params_ref);
+
+      select(undef, undef, undef, $_job_delay * $_wid)
+         if ($_job_delay && $_job_delay > 0.0);
+
+      $self->_worker_do($_params_ref);
       undef $_params_ref;
    }
 
-   ## -------------------------------------------------------------------------
+   ## Notify the main process a worker has ended. The following is executed
+   ## when an invalid reply was received above (not likely to occur).
 
-   ## Notify the main process a worker has ended. This code block is only
-   ## executed if an invalid reply was received above.
-
-   local $\ = undef;
    flock $_COM_LOCK, LOCK_UN;
-
-   select STDOUT;
-
-   my $_OUT_W_SOCK = $self->{_out_w_sock};
-   print $_OUT_W_SOCK OUTPUT_W_END, $LF;
-
-   ## Pause before returning.
-   select(undef, undef, undef, 0.08 + (0.01 * $self->{max_workers}));
+   die "worker $self->{_wid} has ended prematurely";
 
    return 1;
 }
@@ -2288,6 +2402,7 @@ sub _worker_main {
    my $_wid     = $_[1];
    my $_task    = $_[2];
    my $_task_id = $_[3];
+   my $_params  = $_[4];
 
    @_ = ();
 
@@ -2295,24 +2410,17 @@ sub _worker_main {
    ## die "Private method called" unless (caller)[0]->isa( ref($self) );
 
    $SIG{PIPE} = \&_NOOP;
-   my $_sess_dir = $self->{_sess_dir};
 
-   ## Undef vars not required after being spawned.
-   $self->{_com_r_sock}  = $self->{_dat_r_sock}  = $self->{_out_r_sock} = undef;
-   $self->{flush_stderr} = $self->{flush_stdout} = undef;
-   $self->{stderr_file}  = $self->{stdout_file}  = undef;
-   $self->{user_error}   = $self->{user_output}  = undef;
-   $self->{flush_file}   = undef;
-
-   $MCE::Signal::mce_spawned_ref = undef;
-   %_mce_spawned = ();
-
-   ## Use code references from user task if defined.
-   $self->{user_begin} = $_task->{user_begin} if (defined $_task->{user_begin});
-   $self->{user_func}  = $_task->{user_func}  if (defined $_task->{user_func});
-   $self->{user_end}   = $_task->{user_end}   if (defined $_task->{user_end});
+   $SIG{__DIE__} = sub {
+      local $SIG{__DIE__} = sub { };
+      local $\ = undef; print STDERR $_[0];
+      $self->exit(255, $_[0]);
+   };
 
    ## Init runtime vars. Obtain handle to lock files.
+   my $_mce_sid  = $self->{_mce_sid};
+   my $_sess_dir = $self->{_sess_dir};
+
    $self->{_task_id} = $_task_id;
    $self->{_wid}     = $_wid;
 
@@ -2321,12 +2429,52 @@ sub _worker_main {
    open $_COM_LOCK, '+>> :stdio', "$_sess_dir/com.lock";
    open $_DAT_LOCK, '+>> :stdio', "$_sess_dir/dat.lock";
 
+   ## Use code references from user task if defined.
+   $self->{user_begin} = $_task->{user_begin} if (defined $_task->{user_begin});
+   $self->{user_func}  = $_task->{user_func}  if (defined $_task->{user_func});
+   $self->{user_end}   = $_task->{user_end}   if (defined $_task->{user_end});
+
+   ## Define status ID.
+   my $_use_threads = (defined $_task->{use_threads})
+      ? $_task->{use_threads} : $self->{use_threads};
+
+   if ($_has_threads && $_use_threads) {
+      $self->{_exit_pid} = "TID_" . threads->tid();
+   } else {
+      $self->{_exit_pid} = "PID_" . $$;
+   }
+
+   ## Undef vars not required after being spawned.
+   $self->{_com_r_sock}  = $self->{_dat_r_sock}  = $self->{_out_r_sock} = undef;
+   $self->{flush_stderr} = $self->{flush_stdout} = undef;
+   $self->{on_exit_post} = $self->{on_run_post}  = undef;
+   $self->{stderr_file}  = $self->{stdout_file}  = undef;
+   $self->{user_error}   = $self->{user_output}  = undef;
+   $self->{flush_file}   = undef;
+
+   $self->{_pids}   = (); $self->{_thrs}  = (); $self->{_tids} = ();
+   $self->{_status} = (); $self->{_state} = ();
+
+   foreach (keys %_mce_spawned) {
+      delete $_mce_spawned{$_} unless ($_ eq $_mce_sid);
+   }
+
    ## Wait until MCE completes spawning.
-   flock $_COM_LOCK, LOCK_SH;
-   flock $_COM_LOCK, LOCK_UN;
+   unless (defined $_params) {
+      flock $_COM_LOCK, LOCK_SH;
+      flock $_COM_LOCK, LOCK_UN;
+   }
+
+   ## Otherwise, a new worker was spawned taking place of a previous worker.
+   else {
+      $self->{_wid} = $_wid;
+      $self->_worker_do($_params);
+      undef $_params;
+   }
 
    ## Enter worker loop.
-   my $_status = _worker_loop($self);
+   my $_status = $self->_worker_loop();
+   delete $_mce_spawned{ $self->{_mce_sid} };
 
    ## Wait until MCE completes exit notification.
    $SIG{__DIE__} = $SIG{__WARN__} = sub { };
@@ -2353,27 +2501,30 @@ sub _dispatch_child {
    my $_wid     = $_[1];
    my $_task    = $_[2];
    my $_task_id = $_[3];
+   my $_params  = $_[4];
 
    @_ = ();
 
    die "Private method called" unless (caller)[0]->isa( ref($self) );
 
+   select(undef, undef, undef, $self->{spawn_delay})
+      if ($self->{spawn_delay} && $self->{spawn_delay} > 0.0);
+
    my $_pid = fork();
-   push @{ $self->{_pids} }, $_pid if (defined $_pid);
 
    _croak "MCE::_dispatch_child: Failed to spawn worker $_wid: $!"
       unless (defined $_pid);
 
    unless ($_pid) {
-      _worker_main($self, $_wid, $_task, $_task_id);
+      _worker_main($self, $_wid, $_task, $_task_id, $_params);
 
-      ## This child may still exist after exiting or MCE may hang during
-      ## reaping. Therefore, using kill instead. This is done for child
-      ## processes that were spawned from a non-main thread (tid != 0).
-      kill 9, $$ if ($self->{_mce_tid} ne '0' && ! $_is_winperl);
+      close STDERR; close STDOUT;
+      kill 9, $$ unless ($_is_winperl);
 
       CORE::exit();
    }
+
+   push @{ $self->{_pids} }, $_pid if (defined $_pid);
 
    return;
 }
@@ -2390,16 +2541,26 @@ sub _dispatch_thread {
    my $_wid     = $_[1];
    my $_task    = $_[2];
    my $_task_id = $_[3];
+   my $_params  = $_[4];
 
    @_ = ();
 
    die "Private method called" unless (caller)[0]->isa( ref($self) );
 
-   my $_thr = threads->create(\&_worker_main, $self, $_wid, $_task, $_task_id);
-   push @{ $self->{_tids} }, $_thr if (defined $_thr);
+   select(undef, undef, undef, $self->{spawn_delay})
+      if ($self->{spawn_delay} && $self->{spawn_delay} > 0.0);
+
+   my $_thr = threads->create(
+      \&_worker_main, $self, $_wid, $_task, $_task_id, $_params
+   );
 
    _croak "MCE::_dispatch_thread: Failed to spawn worker $_wid: $!"
       unless (defined $_thr);
+
+   if (defined $_thr) {
+      push @{ $self->{_thrs} }, \$_thr;
+      push @{ $self->{_tids} }, $_thr->tid();
+   }
 
    return;
 }

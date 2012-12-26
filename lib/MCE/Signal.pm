@@ -7,21 +7,22 @@
 
 package MCE::Signal;
 
+use strict;
+use warnings;
+
+use Fcntl qw( :flock );
+use base qw( Exporter );
+
+require File::Path;
+
 our ($has_threads, $main_proc_id, $prog_name);
 
 BEGIN {
    $main_proc_id = $$; $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 }
 
-use strict;
-use warnings;
-
-our $VERSION = '1.201';
+our $VERSION = '1.201_001';
 $VERSION = eval $VERSION;
-
-use Fcntl qw( :flock );
-use File::Path qw( rmtree );
-use base 'Exporter';
 
 our $tmp_dir = undef;
 our @EXPORT_OK = qw( $tmp_dir sys_cmd stop_and_exit );
@@ -119,8 +120,9 @@ $SIG{CHLD} = 'DEFAULT' if ($^O ne 'MSWin32');
 our $mce_spawned_ref = undef;
 
 END {
-   MCE::Signal->_shutdown_mce();
-   MCE::Signal->stop_and_exit($?) if ($$ == $main_proc_id || $? != 0);
+   my $_exit_status = $?;
+   MCE::Signal->_shutdown_mce($_exit_status);
+   MCE::Signal->stop_and_exit($_exit_status) if ($$ == $main_proc_id);
 }
 
 ###############################################################################
@@ -238,7 +240,7 @@ sub sys_cmd {
                }
                else {
                   if ($tmp_dir ne '/tmp' && $tmp_dir ne '/var/tmp') {
-                     rmtree($tmp_dir);
+                     File::Path::rmtree($tmp_dir);
                   }
                }
                $tmp_dir = undef;
@@ -291,7 +293,7 @@ sub sys_cmd {
       }
 
       threads->exit($_exit_status) if ($has_threads && threads->can('exit'));
-      exit $_exit_status;
+      CORE::exit($_exit_status);
    }
 }
 
@@ -304,15 +306,22 @@ sub sys_cmd {
 
 sub _shutdown_mce {
 
+   shift @_ if (defined $_[0] && $_[0] eq 'MCE::Signal');
+   my $_exit_status = $_[0] || $?;
+
    if (defined $mce_spawned_ref) {
       my $_tid = ($has_threads) ? threads->tid() : '';
       $_tid = '' unless defined $_tid;
 
       foreach my $_mce_sid (keys %{ $mce_spawned_ref }) {
-         if ($_mce_sid =~ /\A$$\.$_tid\./) {
-            $mce_spawned_ref->{$_mce_sid}->shutdown();
-            delete $mce_spawned_ref->{$_mce_sid};
+         if ($mce_spawned_ref->{$_mce_sid}->wid()) {
+            $mce_spawned_ref->{$_mce_sid}->exit($_exit_status);
          }
+         else {
+            $mce_spawned_ref->{$_mce_sid}->shutdown()
+               if ($_mce_sid =~ /\A$$\.$_tid\./);
+         }
+         delete $mce_spawned_ref->{$_mce_sid};
       }
    }
 }
@@ -328,11 +337,7 @@ sub _die_handler {
    shift @_ if (defined $_[0] && $_[0] eq 'MCE::Signal');
 
    local $SIG{__DIE__} = sub { };
-
-   ## Display die message with localtime.
-
-   local $\ = undef; my $_time_stamp = localtime();
-   print STDERR "## $_time_stamp: $prog_name: ERROR:\n", $_[0];
+   local $\ = undef; print STDERR $_[0];
 
    MCE::Signal->stop_and_exit('__DIE__');
 }
@@ -341,15 +346,15 @@ sub _warn_handler {
 
    shift @_ if (defined $_[0] && $_[0] eq 'MCE::Signal');
 
-   ## Display warning message with localtime. Ignore thread exiting messages
-   ## coming from the user or OS signaling the script to exit.
+   ## Ignore thread warnings during exiting.
 
-   unless ($_[0] =~ /^A thread exited while \d+ threads were running/) {
-      unless ($_[0] =~ /^Perl exited with active threads/) {
-         local $\ = undef; my $_time_stamp = localtime();
-         print STDERR "## $_time_stamp: $prog_name: WARNING:\n", $_[0];
-      }
-   }
+   return if (
+      $_[0] =~ /^Attempt to free unreferenced scalar/            ||
+      $_[0] =~ /^A thread exited while \d+ threads were running/ ||
+      $_[0] =~ /^Perl exited with active threads/
+   );
+
+   local $\ = undef; print STDERR $_[0];
 }
 
 1;
@@ -368,7 +373,7 @@ MCE::Signal - Provides tmp_dir creation & signal handling for Many-Core Engine.
 
 =head1 VERSION
 
-This document describes MCE::Signal version 1.201
+This document describes MCE::Signal version 1.201_001
 
 =head1 SYNOPSIS
 

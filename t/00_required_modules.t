@@ -3,12 +3,9 @@
 use strict;
 use warnings;
 
-use Test::More tests => 4;
+use Test::More tests => 4+1;
+use Test::NoWarnings;
 
-## Threads is not necessary for MCE to function properly.
-## MCE will use threads & threads::shared if installed
-## Otherwise, MCE tries to use forks & forks::shared
-##
 ## The following are minimum Perl modules required by MCE
 
 BEGIN { use_ok('Fcntl', qw( :flock O_CREAT O_TRUNC O_RDWR O_RDONLY )); }
