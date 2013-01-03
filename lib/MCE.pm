@@ -68,7 +68,7 @@ BEGIN {
 my ($_COM_LOCK, $_DAT_LOCK);
 our $_MCE_LOCK : shared = 1;
 
-INIT {
+sub import {
    unless (defined $_has_threads) {
       if (defined $threads::VERSION) {
          unless (defined $threads::shared::VERSION) {
@@ -81,7 +81,7 @@ INIT {
    }
 }
 
-our $VERSION = '1.303';
+our $VERSION = '1.304';
 $VERSION = eval $VERSION;
 
 ###############################################################################
