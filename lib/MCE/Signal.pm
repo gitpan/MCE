@@ -19,10 +19,14 @@ our ($has_threads, $main_proc_id, $prog_name);
 our ($display_die_with_localtime, $display_warn_with_localtime);
 
 BEGIN {
-   $main_proc_id = $$; $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
+   setpgrp(0,0);    ## Sets the current process group for the current process.
+
+   $main_proc_id =  $$;
+   $prog_name    =  $0;
+   $prog_name    =~ s{^.*[\\/]}{}g;
 }
 
-our $VERSION = '1.304';
+our $VERSION = '1.305';
 $VERSION = eval $VERSION;
 
 our $tmp_dir = undef;
@@ -98,6 +102,9 @@ sub import {
 ##
 ###############################################################################
 
+our $mce_sess_dir_ref = undef;
+our $mce_spawned_ref  = undef;
+
 ## Set traps to catch signals.
 $SIG{XCPU} = \&stop_and_exit if (exists $SIG{XCPU});   ## UNIX SIG 24
 $SIG{XFSZ} = \&stop_and_exit if (exists $SIG{XFSZ});   ## UNIX SIG 25
@@ -119,8 +126,6 @@ $SIG{CHLD} = 'DEFAULT' if ($^O ne 'MSWin32');
 ## Call stop_and_exit when exiting the script.
 ##
 ###############################################################################
-
-our $mce_spawned_ref = undef;
 
 END {
    my $_exit_status = $?;
@@ -249,6 +254,11 @@ sub sys_cmd {
                   print STDERR "$prog_name: saved tmp_dir = $tmp_dir\n";
                }
                else {
+                  if (defined $mce_sess_dir_ref) {
+                     foreach my $_sess_dir (keys %{ $mce_sess_dir_ref }) {
+                        File::Path::rmtree($_sess_dir);
+                     }
+                  }
                   if ($tmp_dir ne '/tmp' && $tmp_dir ne '/var/tmp') {
                      File::Path::rmtree($tmp_dir);
                   }
@@ -408,7 +418,7 @@ MCE::Signal - Provides tmp_dir creation & signal handling for Many-Core Engine.
 
 =head1 VERSION
 
-This document describes MCE::Signal version 1.304
+This document describes MCE::Signal version 1.305
 
 =head1 SYNOPSIS
 
