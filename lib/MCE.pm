@@ -81,7 +81,7 @@ sub import {
    }
 }
 
-our $VERSION = '1.306';
+our $VERSION = '1.400';
 $VERSION = eval $VERSION;
 
 ###############################################################################
@@ -135,20 +135,24 @@ undef $_que_template; undef $_que_read_size;
 my %_valid_fields = map { $_ => 1 } qw(
    max_workers tmp_dir use_threads user_tasks task_end
 
-   chunk_size input_data job_delay spawn_delay submit_delay use_slurpio
+   chunk_size input_data job_delay spawn_delay submit_delay use_slurpio RS
    flush_file flush_stderr flush_stdout stderr_file stdout_file on_post_exit
    sequence user_begin user_end user_func user_error user_output on_post_run
+   user_args
 
    _abort_msg _mce_sid _mce_tid _pids _run_mode _single_dim _thrs _tids _wid
    _com_r_sock _com_w_sock _dat_r_sock _dat_w_sock _out_r_sock _out_w_sock
    _que_r_sock _que_w_sock _sess_dir _spawned _state _status _task _task_id
    _exiting _exit_pid _total_exited _total_running _total_workers _task_wid
+   _send_cnt
+
 );
 
 my %_params_allowed_args = map { $_ => 1 } qw(
-   chunk_size input_data job_delay spawn_delay submit_delay use_slurpio
+   chunk_size input_data job_delay spawn_delay submit_delay use_slurpio RS
    flush_file flush_stderr flush_stdout stderr_file stdout_file on_post_exit
    sequence user_begin user_end user_func user_error user_output on_post_run
+   user_args
 );
 
 my $_is_cygwin    = ($^O eq 'cygwin');
@@ -212,6 +216,7 @@ sub new {
    $self->{on_post_exit} = $argv{on_post_exit} || undef;
    $self->{on_post_run}  = $argv{on_post_run}  || undef;
    $self->{sequence}     = $argv{sequence}     || undef;
+   $self->{user_args}    = $argv{user_args}    || undef;
    $self->{user_begin}   = $argv{user_begin}   || undef;
    $self->{user_func}    = $argv{user_func}    || undef;
    $self->{user_end}     = $argv{user_end}     || undef;
@@ -224,6 +229,7 @@ sub new {
    $self->{stdout_file}  = $argv{stdout_file}  || undef;
    $self->{user_tasks}   = $argv{user_tasks}   || undef;
    $self->{task_end}     = $argv{task_end}     || undef;
+   $self->{RS}           = $argv{RS}           || undef;
 
    ## Validation.
    for (keys %argv) {
@@ -285,6 +291,7 @@ sub new {
    $self->{_state}      = undef; ## State info: task/task_id/task_wid/params
    $self->{_task}       = undef; ## Task info: total_running/total_workers
 
+   $self->{_send_cnt}   =     0; ## Number of times data was sent via send
    $self->{_spawned}    =     0; ## Workers spawned
    $self->{_task_id}    =     0; ## Task ID        starts at 0 (array index)
    $self->{_task_wid}   =     0; ## Task Worker ID starts at 1 per task
@@ -507,7 +514,8 @@ sub spawn {
       local $/ = $LF; <$_COM_R_SOCK>;
    }
 
-   $self->{_spawned} = 1;
+   $self->{_send_cnt} = 0;
+   $self->{_spawned}  = 1;
 
    ## Release lock.
    flock $_COM_LOCK, LOCK_UN;
@@ -808,35 +816,25 @@ sub run {
    ## -------------------------------------------------------------------------
 
    my $_chunk_size    = $self->{chunk_size};
+   my $_sequence      = $self->{sequence};
+   my $_user_args     = $self->{user_args};
+   my $_use_slurpio   = $self->{use_slurpio};
+
    my $_sess_dir      = $self->{_sess_dir};
    my $_total_workers = $self->{_total_workers};
-   my $_use_slurpio   = $self->{use_slurpio};
 
    my %_params = (
       '_abort_msg'  => $_abort_msg,    '_run_mode'    => $_run_mode,
       '_chunk_size' => $_chunk_size,   '_single_dim'  => $_single_dim,
-      '_input_file' => $_input_file,   '_use_slurpio' => $_use_slurpio
+      '_input_file' => $_input_file,   '_sequence'    => $_sequence,
+      '_user_args'  => $_user_args,    '_use_slurpio' => $_use_slurpio
    );
    my %_params_nodata = (
       '_abort_msg'  => undef,          '_run_mode'    => 'nodata',
       '_chunk_size' => $_chunk_size,   '_single_dim'  => $_single_dim,
-      '_input_file' => $_input_file,   '_use_slurpio' => $_use_slurpio
+      '_input_file' => $_input_file,   '_sequence'    => $_sequence,
+      '_user_args'  => $_user_args,    '_use_slurpio' => $_use_slurpio
    );
-
-   ## One can configure chunk_size independently with sequence per each
-   ## task under user_tasks. Remove chunk_size from params in order to
-   ## not be overwritten once the worker receives it.
-
-   if (!defined $self->{input_data} && defined $self->{user_tasks}) {
-      my $_has_chunk_size_option = 0;
-
-      for my $_task (@{ $self->{user_tasks} }) {
-         $_has_chunk_size_option = 1 if (defined $_task->{chunk_size});
-      }
-      if ($_has_chunk_size_option) {
-         delete $_params{_chunk_size}; delete $_params_nodata{_chunk_size};
-      }
-   }
 
    my $_COM_LOCK;
 
@@ -900,6 +898,7 @@ sub run {
 
    ## -------------------------------------------------------------------------
 
+   $self->{_send_cnt}      = 0;
    $self->{_total_exited}  = 0;
    $self->{_total_running} = $_total_workers;
 
@@ -930,6 +929,78 @@ sub run {
 
    ## Shutdown workers (also if any workers have exited).
    $self->shutdown() if ($_auto_shutdown == 1 || $self->{_total_exited} > 0);
+
+   return $self;
+}
+
+###############################################################################
+## ----------------------------------------------------------------------------
+## Send method.
+##
+###############################################################################
+
+sub send {
+
+   my MCE $self = $_[0];
+
+   _croak("MCE::send: method cannot be called by the worker process")
+      if ($self->{_wid});
+
+   _croak("MCE::send: method cannot be called while running")
+      if ($self->{_total_running} && $self->{_total_running} > 0);
+
+   my $_data_ref;
+
+   if (ref $_[1] eq 'ARRAY' || ref $_[1] eq 'HASH' || ref $_[1] eq 'PDL') {
+      $_data_ref = $_[1];
+   } else {
+      _croak("MCE::send: ARRAY, HASH, or PDL reference is not specified");
+   }
+
+   $self->{_send_cnt} = 0 unless (defined $self->{_send_cnt});
+
+   _croak("MCE::send: Sending greater than # of workers is not allowed")
+      if ($self->{_send_cnt} >= $self->{_task}->[0]->{_total_workers});
+
+   @_ = ();
+
+   ## -------------------------------------------------------------------------
+
+   ## Spawn workers.
+   $self->spawn() if ($self->{_spawned} == 0);
+
+   local $SIG{__DIE__} = \&_die; local $SIG{__WARN__} = \&_warn;
+
+   ## Begin data submission.
+   {
+      local $\ = undef; local $/ = $LF;
+
+      my $_COM_R_SOCK   = $self->{_com_r_sock};
+      my $_sess_dir     = $self->{_sess_dir};
+      my $_submit_delay = $self->{submit_delay};
+
+      my $_frozen_data  = freeze($_data_ref);
+      my $_has_data;
+
+      ## Submit data to worker.
+      select(undef, undef, undef, $_submit_delay)
+         if ($_submit_delay && $_submit_delay > 0.0);
+
+      while (1) {
+         print $_COM_R_SOCK "_data${LF}";
+         <$_COM_R_SOCK>;
+
+         chomp($_has_data = <$_COM_R_SOCK>);
+
+         if ($_has_data eq 'no') {
+            print $_COM_R_SOCK length($_frozen_data), $LF, $_frozen_data;
+            <$_COM_R_SOCK>;
+            last;
+         }
+      }
+   }
+
+   $self->{_send_cnt} += 1;
 
    return $self;
 }
@@ -1031,6 +1102,7 @@ sub shutdown {
    $self->{_task_id}    = $self->{_task_wid}   = 0;
    $self->{_spawned}    = $self->{_wid}        = 0;
    $self->{_sess_dir}   = undef;
+   $self->{_send_cnt}   = 0;
 
    return $self;
 }
@@ -1303,33 +1375,33 @@ sub _validate_args {
    my $_tag = 'MCE::_validate_args';
 
    if (defined $_s->{input_data} && ref $_s->{input_data} eq '') {
-      _croak "$_tag: '$_s->{input_data}' does not exist"
+      _croak("$_tag: '$_s->{input_data}' does not exist")
          unless (-e $_s->{input_data});
    }
 
-   _croak "$_tag: 'use_slurpio' is not 0 or 1"
+   _croak("$_tag: 'use_slurpio' is not 0 or 1")
       if ($_s->{use_slurpio} && $_s->{use_slurpio} !~ /\A[01]\z/);
-   _croak "$_tag: 'job_delay' is not valid"
+   _croak("$_tag: 'job_delay' is not valid")
       if ($_s->{job_delay} && $_s->{job_delay} !~ /\A[\d\.]+\z/);
-   _croak "$_tag: 'spawn_delay' is not valid"
+   _croak("$_tag: 'spawn_delay' is not valid")
       if ($_s->{spawn_delay} && $_s->{spawn_delay} !~ /\A[\d\.]+\z/);
-   _croak "$_tag: 'submit_delay' is not valid"
+   _croak("$_tag: 'submit_delay' is not valid")
       if ($_s->{submit_delay} && $_s->{submit_delay} !~ /\A[\d\.]+\z/);
 
-   _croak "$_tag: 'on_post_exit' is not a CODE reference"
+   _croak("$_tag: 'on_post_exit' is not a CODE reference")
       if ($_s->{on_post_exit} && ref $_s->{on_post_exit} ne 'CODE');
-   _croak "$_tag: 'on_post_run' is not a CODE reference"
+   _croak("$_tag: 'on_post_run' is not a CODE reference")
       if ($_s->{on_post_run} && ref $_s->{on_post_run} ne 'CODE');
-   _croak "$_tag: 'user_error' is not a CODE reference"
+   _croak("$_tag: 'user_error' is not a CODE reference")
       if ($_s->{user_error} && ref $_s->{user_error} ne 'CODE');
-   _croak "$_tag: 'user_output' is not a CODE reference"
+   _croak("$_tag: 'user_output' is not a CODE reference")
       if ($_s->{user_output} && ref $_s->{user_output} ne 'CODE');
 
-   _croak "$_tag: 'flush_file' is not 0 or 1"
+   _croak("$_tag: 'flush_file' is not 0 or 1")
       if ($_s->{flush_file} && $_s->{flush_file} !~ /\A[01]\z/);
-   _croak "$_tag: 'flush_stderr' is not 0 or 1"
+   _croak("$_tag: 'flush_stderr' is not 0 or 1")
       if ($_s->{flush_stderr} && $_s->{flush_stderr} !~ /\A[01]\z/);
-   _croak "$_tag: 'flush_stdout' is not 0 or 1"
+   _croak("$_tag: 'flush_stdout' is not 0 or 1")
       if ($_s->{flush_stdout} && $_s->{flush_stdout} !~ /\A[01]\z/);
 
    $_s->_validate_args_s();
@@ -1338,7 +1410,7 @@ sub _validate_args {
       for my $_t (@{ $_s->{user_tasks} }) {
          $_s->_validate_args_s($_t);
 
-         _croak "$_tag: 'task_end' is not a CODE reference"
+         _croak("$_tag: 'task_end' is not a CODE reference")
             if ($_t->{task_end} && ref $_t->{task_end} ne 'CODE');
       }
    }
@@ -1357,38 +1429,50 @@ sub _validate_args_s {
 
    my $_tag = 'MCE::_validate_args_s';
 
-   _croak "$_tag: 'chunk_size' is not valid"
+   _croak("$_tag: 'chunk_size' is not valid")
       if (defined $_s->{chunk_size} && (
          $_s->{chunk_size} !~ /\A\d+\z/ or $_s->{chunk_size} == 0
       ));
-   _croak "$_tag: 'max_workers' is not valid"
+   _croak("$_tag: 'max_workers' is not valid")
       if (defined $_s->{max_workers} && (
          $_s->{max_workers} !~ /\A\d+\z/ or $_s->{max_workers} == 0
       ));
 
-   _croak "$_tag: 'use_threads' is not 0 or 1"
+   _croak("$_tag: 'RS' is not valid")
+      if ($_s->{RS} && ref $_s->{RS} ne '');
+   _croak("$_tag: 'use_threads' is not 0 or 1")
       if ($_s->{use_threads} && $_s->{use_threads} !~ /\A[01]\z/);
-   _croak "$_tag: 'user_begin' is not a CODE reference"
+   _croak("$_tag: 'user_begin' is not a CODE reference")
       if ($_s->{user_begin} && ref $_s->{user_begin} ne 'CODE');
-   _croak "$_tag: 'user_func' is not a CODE reference"
+   _croak("$_tag: 'user_func' is not a CODE reference")
       if ($_s->{user_func} && ref $_s->{user_func} ne 'CODE');
-   _croak "$_tag: 'user_end' is not a CODE reference"
+   _croak("$_tag: 'user_end' is not a CODE reference")
       if ($_s->{user_end} && ref $_s->{user_end} ne 'CODE');
 
    if (defined $_s->{sequence}) {
       my $_seq = $_s->{sequence};
 
-      _croak "$_tag: cannot specify both 'input_data' and 'sequence'"
+      _croak("$_tag: cannot specify both 'input_data' and 'sequence'")
          if (defined $self->{input_data});
-      _croak "$_tag: 'sequence' is not a HASH reference"
-         if (ref $_seq ne 'HASH');
-      _croak "$_tag: 'begin' is not defined for sequence"
+
+      if (ref $_seq eq 'ARRAY') {
+         my ($_begin, $_end, $_step, $_format) = @{ $_seq };
+         $_seq = {
+            begin => $_begin, end => $_end, step => $_step, format => $_format
+         };
+      }
+      else {
+         _croak("$_tag: 'sequence' is not a HASH or ARRAY reference")
+            if (ref $_seq ne 'HASH');
+      }
+
+      _croak("$_tag: 'begin' is not defined for sequence")
          unless (defined $_seq->{begin});
-      _croak "$_tag: 'end' is not defined for sequence"
+      _croak("$_tag: 'end' is not defined for sequence")
          unless (defined $_seq->{end});
 
       for (qw(begin end step)) {
-         _croak "$_tag: '$_' is not valid for sequence"
+         _croak("$_tag: '$_' is not valid for sequence")
             if (defined $_seq->{$_} && (
                $_seq->{$_} eq '' || $_seq->{$_} !~ /\A-?\d*\.?\d*\z/
             ));
@@ -1396,13 +1480,16 @@ sub _validate_args_s {
 
       unless (defined $_seq->{step}) {
          $_seq->{step} = ($_seq->{begin} < $_seq->{end}) ? 1 : -1;
+         if (ref $_s->{sequence} eq 'ARRAY') {
+            $_s->{sequence}->[2] = $_seq->{step};
+         }
       }
 
       if ( ($_seq->{step} < 0 && $_seq->{begin} < $_seq->{end}) ||
            ($_seq->{step} > 0 && $_seq->{begin} > $_seq->{end}) ||
            ($_seq->{step} == 0)
       ) {
-         _croak "$_tag: impossible 'step' size for sequence";
+         _croak("$_tag: impossible 'step' size for sequence");
       }
    }
 
@@ -1530,12 +1617,8 @@ sub _validate_args_s {
          read $_DAT_W_SOCK, $_buffer, $_len;
 
          flock $_DAT_LOCK, LOCK_UN;
-         if ($_want_id == WANTS_SCALAR) {
-            return $_buffer;
-         }
-         else {
-            return thaw($_buffer);
-         }
+         return $_buffer if ($_want_id == WANTS_SCALAR);
+         return thaw($_buffer);
       }
    }
 
@@ -1606,7 +1689,7 @@ sub _validate_args_s {
    my ($_callback, $_file, %_sendto_fhs, $_len);
 
    my ($_DAT_R_SOCK, $_OUT_R_SOCK, $_MCE_STDERR, $_MCE_STDOUT);
-   my ($_I_SEP, $_O_SEP, $_input_glob, $_chunk_size);
+   my ($_RS, $_I_SEP, $_O_SEP, $_input_glob, $_chunk_size);
    my ($_input_size, $_offset_pos, $_single_dim, $_use_slurpio);
 
    my ($_has_user_tasks, $_on_post_exit, $_on_post_run, $_task_id);
@@ -1757,7 +1840,7 @@ sub _validate_args_s {
          }
 
          {
-            local $/ = $_I_SEP;
+            local $/ = $_RS;
 
             if ($_chunk_size <= MAX_RECS_SIZE) {
                for (1 .. $_chunk_size) {
@@ -2029,6 +2112,7 @@ sub _validate_args_s {
       $_OUT_R_SOCK = $self->{_out_r_sock};        ## For serialized reads
       $_DAT_R_SOCK = $self->{_dat_r_sock};
 
+      $_RS    = $self->{RS} || $/;
       $_O_SEP = $\; local $\ = undef;
       $_I_SEP = $/; local $/ = $LF;
 
@@ -2074,7 +2158,10 @@ sub _validate_args_s {
 
 sub _sync_buffer_to_array {
 
-   my $_buffer_ref = $_[0]; my $_array_ref = $_[1]; my $_cnt = 0;
+   my $_buffer_ref = $_[0]; my $_array_ref = $_[1]; my $_RS = $_[2];
+   my $_cnt = 0;
+
+   local $/ = $_RS;
 
    open my $_MEM_FILE, '<', $_buffer_ref;
    binmode $_MEM_FILE;
@@ -2107,6 +2194,7 @@ sub _worker_read_handle {
    my $_chunk_size  = $self->{chunk_size};
    my $_use_slurpio = $self->{use_slurpio};
    my $_user_func   = $self->{user_func};
+   my $_RS          = $self->{RS} || $/;
 
    my ($_data_size, $_next, $_chunk_id, $_offset_pos, $_IN_FILE);
    my @_records = (); $_chunk_id = $_offset_pos = 0;
@@ -2158,6 +2246,7 @@ sub _worker_read_handle {
 
       ## Read data.
       if ($_chunk_size <= MAX_RECS_SIZE) {        ## One or many records.
+         local $/ = $_RS;
          seek $_IN_FILE, $_offset_pos, 0 if ($_many_wrks);
          if ($_chunk_size == 1) {
             $_buffer = <$_IN_FILE>;
@@ -2178,6 +2267,7 @@ sub _worker_read_handle {
          }
       }
       else {                                      ## Large chunk.
+         local $/ = $_RS;
          if ($_proc_type == READ_MEMORY) {
             seek $_IN_FILE, $_offset_pos, 0 if ($_many_wrks);
             if (read($_IN_FILE, $_buffer, $_chunk_size) == $_chunk_size) {
@@ -2213,7 +2303,7 @@ sub _worker_read_handle {
          }
          else {
             if ($_chunk_size > MAX_RECS_SIZE) {
-               _sync_buffer_to_array(\$_buffer, \@_records);
+               _sync_buffer_to_array(\$_buffer, \@_records, $_RS);
             }
             $_user_func->($self, \@_records, $_chunk_id);
          }
@@ -2249,6 +2339,7 @@ sub _worker_request_chunk {
    my $_chunk_size  = $self->{chunk_size};
    my $_use_slurpio = $self->{use_slurpio};
    my $_user_func   = $self->{user_func};
+   my $_RS          = $self->{RS} || $/;
 
    my ($_next, $_chunk_id, $_has_data, $_len, $_chunk_ref);
    my ($_output_tag, @_records);
@@ -2323,7 +2414,7 @@ sub _worker_request_chunk {
                $_user_func->($self, [ $_buffer ], $_chunk_id);
             }
             else {
-               _sync_buffer_to_array(\$_buffer, \@_records);
+               _sync_buffer_to_array(\$_buffer, \@_records, $_RS);
                $_user_func->($self, \@_records, $_chunk_id);
             }
          }
@@ -2353,10 +2444,17 @@ sub _worker_sequence_generator {
    my $_chunk_size  = $self->{chunk_size};
    my $_user_func   = $self->{user_func};
 
-   my $_begin       = $self->{sequence}->{begin};
-   my $_end         = $self->{sequence}->{end};
-   my $_step        = $self->{sequence}->{step};
-   my $_fmt         = $self->{sequence}->{format};
+   my ($_begin, $_end, $_step, $_fmt);
+
+   if (ref $self->{sequence} eq 'ARRAY') {
+      ($_begin, $_end, $_step, $_fmt) = @{ $self->{sequence} };
+   }
+   else {
+      $_begin       = $self->{sequence}->{begin};
+      $_end         = $self->{sequence}->{end};
+      $_step        = $self->{sequence}->{step};
+      $_fmt         = $self->{sequence}->{format};
+   }
 
    my $_wid         = $self->{_task_wid} || $self->{_wid};
    my $_next        = ($_wid - 1) * $_chunk_size * $_step + $_begin;
@@ -2454,8 +2552,13 @@ sub _worker_do {
    $self->{_single_dim} = $_params_ref->{_single_dim};
    $self->{use_slurpio} = $_params_ref->{_use_slurpio};
 
-   $self->{chunk_size}  = $_params_ref->{_chunk_size}
-      if (defined $_params_ref->{_chunk_size});
+   ## Do not override params if defined in user_tasks during instantiation.
+   for (qw(chunk_size sequence user_args)) {
+      if (defined $_params_ref->{"_$_"}) {
+         $self->{$_} = $_params_ref->{"_$_"}
+            unless (defined $self->{_task}->{$_});
+      }
+   }
 
    ## Init local vars.
    my $_OUT_W_SOCK = $self->{_out_w_sock};
@@ -2487,6 +2590,7 @@ sub _worker_do {
 
    undef $self->{_next_jmp} if (defined $self->{_next_jmp});
    undef $self->{_last_jmp} if (defined $self->{_last_jmp});
+   undef $self->{user_data} if (defined $self->{user_data});
 
    ## Call user_end if defined.
    $self->{user_end}->($self) if (defined $self->{user_end});
@@ -2517,8 +2621,9 @@ sub _worker_loop {
 
    my $_COM_W_SOCK = $self->{_com_w_sock};
    my $_job_delay  = $self->{job_delay};
+   my $_task_id    = $self->{_task_id};
    my $_wid        = $self->{_wid};
- 
+
    while (1) {
 
       {
@@ -2533,23 +2638,53 @@ sub _worker_loop {
          chomp $_response;
 
          ## End loop if an invalid reply.
-         last if ($_response !~ /\A(?:\d+|_exit)\z/);
+         last if ($_response !~ /\A(?:\d+|_data|_exit)\z/);
 
-         ## Return to caller if instructed to exit.
-         if ($_response eq '_exit') {
-            flock $_COM_LOCK, LOCK_UN;
-            return 0;
+         if ($_response eq '_data') {
+            ## Reply 'yes' if I already have user data or I'm a
+            ## worker not belonging to the first user_tasks.
+            if (defined $self->{user_data} || $_task_id > 0) {
+               print $_COM_W_SOCK 'yes', $LF;
+               flock $_COM_LOCK, LOCK_UN;
+
+               select(undef, undef, undef, 0.003);
+            }
+            ## Otherwise, acquire user data.
+            else {
+               print $_COM_W_SOCK 'no', $LF;
+
+               chomp($_len = <$_COM_W_SOCK>);
+               read $_COM_W_SOCK, $_buffer, $_len;
+
+               print $_COM_W_SOCK $_wid, $LF;
+               flock $_COM_LOCK, LOCK_UN;
+
+               $self->{user_data} = thaw($_buffer);
+               undef $_buffer;
+
+               select(undef, undef, undef, 0.003);
+            }
          }
+         else {
+            ## Return to caller if instructed to exit.
+            if ($_response eq '_exit') {
+               flock $_COM_LOCK, LOCK_UN;
+               return 0;
+            }
 
-         ## Retrieve params data.
-         chomp($_len = <$_COM_W_SOCK>);
-         read $_COM_W_SOCK, $_buffer, $_len;
+            ## Retrieve params data.
+            chomp($_len = <$_COM_W_SOCK>);
+            read $_COM_W_SOCK, $_buffer, $_len;
 
-         print $_COM_W_SOCK $_wid, $LF;
-         flock $_COM_LOCK, LOCK_UN;
+            print $_COM_W_SOCK $_wid, $LF;
+            flock $_COM_LOCK, LOCK_UN;
 
-         $_params_ref = thaw($_buffer);
+            $_params_ref = thaw($_buffer);
+         }
       }
+
+      ## Start over if the last response was for acquiring user data.
+      next if ($_response eq '_data');
 
       ## Wait until MCE completes params submission to all workers.
       flock $_DAT_LOCK, LOCK_SH; flock $_DAT_LOCK, LOCK_UN;
@@ -2602,6 +2737,7 @@ sub _worker_main {
    };
 
    ## Use options from user_tasks if defined.
+   $self->{user_args}  = $_task->{user_args}  if (defined $_task->{user_args});
    $self->{user_begin} = $_task->{user_begin} if (defined $_task->{user_begin});
    $self->{user_func}  = $_task->{user_func}  if (defined $_task->{user_func});
    $self->{user_end}   = $_task->{user_end}   if (defined $_task->{user_end});
@@ -2616,6 +2752,7 @@ sub _worker_main {
 
    $self->{_task_id}  = (defined $_task_id ) ? $_task_id  : 0;
    $self->{_task_wid} = (defined $_task_wid) ? $_task_wid : $_wid;
+   $self->{_task}     = $_task;
    $self->{_wid}      = $_wid;
 
    _do_send_init($self);
@@ -2638,10 +2775,11 @@ sub _worker_main {
       $self->{flush_file} = $self->{flush_stderr} = $self->{flush_stdout} =
       $self->{on_post_exit} = $self->{on_post_run} = $self->{stderr_file} =
       $self->{stdout_file} = $self->{user_error} = $self->{user_output} =
+      $self->{user_data} =
    undef;
 
    $self->{_pids} = $self->{_thrs} = $self->{_tids} = $self->{_status} =
-      $self->{_state} = $self->{_task} =
+      $self->{_state} =
    ();
 
    foreach (keys %_mce_spawned) {
@@ -2699,7 +2837,7 @@ sub _dispatch_child {
 
    my $_pid = fork();
 
-   _croak "MCE::_dispatch_child: Failed to spawn worker $_wid: $!"
+   _croak("MCE::_dispatch_child: Failed to spawn worker $_wid: $!")
       unless (defined $_pid);
 
    unless ($_pid) {
@@ -2747,7 +2885,7 @@ sub _dispatch_thread {
       $self, $_wid, $_task, $_task_id, $_task_wid, $_params
    );
 
-   _croak "MCE::_dispatch_thread: Failed to spawn worker $_wid: $!"
+   _croak("MCE::_dispatch_thread: Failed to spawn worker $_wid: $!")
       unless (defined $_thr);
 
    if (defined $_thr) {
