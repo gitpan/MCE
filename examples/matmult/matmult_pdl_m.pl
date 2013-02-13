@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl matmult_pdl_m.pl   1024  ## Default size is 512:  $c = $a * $b
+##    perl matmult_pdl_m.pl 1024  ## Default size is 512:  $c = $a * $b
 ##
 
 use strict;
@@ -13,20 +13,14 @@ use lib "$FindBin::Bin/../../lib";
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
+use Storable qw(freeze thaw);
 use Time::HiRes qw(time);
 
 use PDL;
-use PDL::IO::FastRaw;                    ## Required for MMAP IO
 use PDL::IO::Storable;                   ## Required for PDL + MCE combo
 
 use MCE::Signal qw($tmp_dir -use_dev_shm);
 use MCE;
-
-if ($^O eq 'MSWin32') {
-   print "PDL + MCE does not run reliably under Windows. Exiting.\n";
-   print "Not sure what the problem is at the moment.\n";
-   exit;
-}  
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
@@ -40,48 +34,28 @@ unless ($tam > 1) {
    exit 1;
 }
 
-my $cols = $tam;
-my $rows = $tam;
+my $mce  = configure_and_spawn_mce(8);
+my $cols = $tam; my $rows = $tam;
 
-my $mce = MCE->new(
-
-   max_workers => 8,
-   sequence    => { begin => 0, end => $rows - 1, step => 1 },
-
-   user_begin  => sub {
-      my ($self) = @_;
-      $self->{matrix_b} = mapfraw("$tmp_dir/matrix_b.raw", { ReadOnly => 1 });
-   },
-
-   user_func   => sub {
-      my ($self, $i, $chunk_id) = @_;
-
-      my $a_i = $self->do('get_row_a', $i);
-      my $matrix_b = $self->{matrix_b};
-      my $result_i = [ ];
-
-      for my $j (0 .. $rows - 1) {
-         my $c_j = $matrix_b->slice(":,($j)");
-         $result_i->[$j] = ( $a_i * $c_j )->sum();
-      }
-
-      $self->do('insert_row', $i, pdl($result_i));
-
-      return;
-   }
-);
-
-$mce->spawn();
-
-my $a = sequence $cols,$rows;
-my $b = sequence $rows,$cols;
+my $a = sequence($cols,$rows);
+my $b = sequence($rows,$cols)->transpose;
 my $c = zeroes   $rows,$rows;
 
-writefraw($b->transpose, "$tmp_dir/matrix_b.raw");
+open my $fh, '>', "$tmp_dir/cache.b";
+
+for my $j (0 .. $rows - 1) {
+   my $row_serialized = freeze $b->slice(":,($j)");
+   print $fh length($row_serialized), "\n", $row_serialized;
+}
+
+close $fh;
 
 my $start = time();
 
-$mce->run(0);
+$mce->run(0, {
+   sequence  => { begin => 0, end => $rows - 1, step => 1 },
+   user_args => { cols => $cols, rows => $rows, path_b => "$tmp_dir/cache.b" }
+} );
 
 my $end = time();
 
@@ -106,5 +80,51 @@ sub get_row_a {
 sub insert_row {
    ins(inplace($c), $_[1], 0, $_[0]);
    return;
+}
+
+sub configure_and_spawn_mce {
+
+   my $max_workers = shift || 8;
+
+   return MCE->new(
+
+      max_workers => $max_workers,
+
+      user_begin  => sub {
+         my ($self) = @_;
+         my $buffer;
+
+         open my $fh, '<', $self->{user_args}->{path_b};
+         $self->{cache_b} = [ ];
+
+         for my $j (0 .. $self->{user_args}->{rows} - 1) {
+            read $fh, $buffer, <$fh>;
+            $self->{cache_b}->[$j] = thaw $buffer;
+         }
+
+         close $fh;
+      },
+
+      user_func   => sub {
+         my ($self, $i, $chunk_id) = @_;
+
+         my $a_i = $self->do('get_row_a', $i);
+         my $cache_b = $self->{cache_b};
+         my $result_i = [ ];
+
+         my $rows = $self->{user_args}->{rows};
+         my $cols = $self->{user_args}->{cols};
+
+         for my $j (0 .. $rows - 1) {
+            my $c_j = $cache_b->[$j];
+            $result_i->[$j] = ( $a_i * $c_j )->sum();
+         }
+
+         $self->do('insert_row', $i, pdl($result_i));
+
+         return;
+      }
+
+   )->spawn;
 }
 

@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl strassen_pdl_m.pl  1024  ## Default size is 512:  divide-and-conquer
+##    perl strassen_pdl_m.pl 1024  ## Default size is 512:  divide-and-conquer
 ##
 
 use strict;
@@ -20,12 +20,6 @@ use PDL::IO::Storable;                   ## Required for PDL + MCE combo
 
 use MCE::Signal qw(-use_dev_shm);
 use MCE;
-
-if ($^O eq 'MSWin32') {
-   print "PDL + MCE does not run reliably under Windows. Exiting.\n";
-   print "Not sure what the problem is at the moment.\n";
-   exit;
-}  
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #

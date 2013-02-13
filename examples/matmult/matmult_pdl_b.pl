@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl matmult_pdl_b.pl   1024  ## Default size is 512:  $c = $a x $b
+##    perl matmult_pdl_b.pl 1024  ## Default size is 512:  $c = $a x $b
 ##
 
 use strict;
@@ -31,14 +31,10 @@ unless ($tam > 1) {
 
 my $a = sequence $tam,$tam;
 my $b = sequence $tam,$tam;
-my $c;
-
-my $max_parallel_level = 1;              ## Levels deep to parallelize
-my @p = ( );                             ## For MCE results - must be global
 
 my $start = time();
 
-$c = $a x $b;                            ## Start matrix multiplication
+my $c = $a x $b;                         ## Performs matrix multiplication
 
 my $end = time();
 
