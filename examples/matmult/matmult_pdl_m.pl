@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl matmult_pdl_m.pl 1024  ## Default size is 512:  $c = $a * $b
+##    perl matmult_pdl_m.pl 1024  ## Default size is 512:  $c = $a x $b
 ##
 
 use strict;
@@ -30,20 +30,25 @@ my $tam = shift;
    $tam = 512 unless (defined $tam);
 
 unless ($tam > 1) {
-   print STDERR "Error: $tam is not 2 or greater. Exiting.\n";
+   print STDERR "Error: $tam must be an integer greater than 1. Exiting.\n";
    exit 1;
 }
 
-my $mce  = configure_and_spawn_mce(8);
-my $cols = $tam; my $rows = $tam;
+my $max_workers = 8;
+my $step_size   = 10;
 
-my $a = sequence($cols,$rows);
-my $b = sequence($rows,$cols)->transpose;
+my $mce = configure_and_spawn_mce($max_workers);
+
+my $cols = $tam;
+my $rows = $tam;
+
+my $a = sequence $cols,$rows;
+my $b = sequence $rows,$cols;
 my $c = zeroes   $rows,$rows;
 
 open my $fh, '>', "$tmp_dir/cache.b";
 
-for my $j (0 .. $rows - 1) {
+for my $j (0 .. $cols - 1) {
    my $row_serialized = freeze $b->slice(":,($j)");
    print $fh length($row_serialized), "\n", $row_serialized;
 }
@@ -53,7 +58,7 @@ close $fh;
 my $start = time();
 
 $mce->run(0, {
-   sequence  => { begin => 0, end => $rows - 1, step => 1 },
+   sequence  => { begin => 0, end => $rows - 1, step => $step_size },
    user_args => { cols => $cols, rows => $rows, path_b => "$tmp_dir/cache.b" }
 } );
 
@@ -74,11 +79,19 @@ print "\n\n";
 ###############################################################################
 
 sub get_row_a {
-   return $a->slice(":,($_[0])");
+
+   my $start = $_[0];
+   my $stop  = $start + $step_size - 1;
+
+   $stop = $rows - 1 if ($stop >= $rows);
+
+   return $a->slice(":,$start:$stop");
 }
 
 sub insert_row {
+
    ins(inplace($c), $_[1], 0, $_[0]);
+
    return;
 }
 
@@ -89,38 +102,37 @@ sub configure_and_spawn_mce {
    return MCE->new(
 
       max_workers => $max_workers,
+      job_delay   => ($tam > 2048) ? 0.043 : undef,
 
       user_begin  => sub {
          my ($self) = @_;
          my $buffer;
 
-         open my $fh, '<', $self->{user_args}->{path_b};
-         $self->{cache_b} = [ ];
+         my $cols = $self->{user_args}->{cols};
+         my $rows = $self->{user_args}->{rows};
+         my $b    = zeros $rows,$cols;
 
-         for my $j (0 .. $self->{user_args}->{rows} - 1) {
+         open my $fh, '<', $self->{user_args}->{path_b};
+         use PDL::NiceSlice;
+
+         for my $j (0 .. $self->{user_args}->{cols} - 1) {
             read $fh, $buffer, <$fh>;
-            $self->{cache_b}->[$j] = thaw $buffer;
+            $b(:,$j) .= thaw $buffer;
          }
 
+         no PDL::NiceSlice;
          close $fh;
+
+         $self->{matrix_b} = $b;
       },
 
       user_func   => sub {
          my ($self, $i, $chunk_id) = @_;
 
          my $a_i = $self->do('get_row_a', $i);
-         my $cache_b = $self->{cache_b};
-         my $result_i = [ ];
+         my $result_i = $a_i x $self->{matrix_b};
 
-         my $rows = $self->{user_args}->{rows};
-         my $cols = $self->{user_args}->{cols};
-
-         for my $j (0 .. $rows - 1) {
-            my $c_j = $cache_b->[$j];
-            $result_i->[$j] = ( $a_i * $c_j )->sum();
-         }
-
-         $self->do('insert_row', $i, pdl($result_i));
+         $self->do('insert_row', $i, $result_i);
 
          return;
       }
