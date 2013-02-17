@@ -2,14 +2,14 @@
 
 ##
 ## Usage:
-##    perl matmult_perl_m.pl 1024  ## Default size is 512:  $c = $a * $b
+##    perl matmult_perl_m.pl 1024        ## Default size 512
 ##
 
 use strict;
 use warnings;
 
-use FindBin;
-use lib "$FindBin::Bin/../../lib";
+use Cwd qw(abs_path);
+use lib abs_path . "/../../lib";
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
