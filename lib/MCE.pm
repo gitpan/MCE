@@ -19,7 +19,7 @@ my ($_que_template, $_que_read_size);
 my ($_has_threads, $_max_files, $_max_procs);
 
 BEGIN {
-   ## Configure template to use for pack/unpack for writing to and reading from
+   ## Configure template to use for pack/unpack for writing to & reading from
    ## the queue. Each entry contains 2 positive numbers: chunk_id & msg_id.
    ## Attempt 64-bit size, otherwize fall back to host machine's word length.
    {
@@ -51,20 +51,6 @@ BEGIN {
          $_max_files = $_max_procs = 256;
       }
    }
-
-   ## Limit to 3152 and 788 for MCE.
-   $_max_files = 3152 if ($_max_files > 3152);
-   $_max_procs =  788 if ($_max_procs >  788);
-}
-
-## PDL + MCE (spawning as threads) is not stable. A comment from David Mertens
-## mentioned the fix for his PDL::Parallel::threads module. The CLONE_SKIP is
-## also needed here in order for PDL + MCE threads to not crash during exiting.
-## Thanks goes to David !!! I would have definitely struggled with this one.
-##
-{
-   no warnings 'redefine';
-   sub PDL::CLONE_SKIP { 1 }
 }
 
 ###############################################################################
@@ -91,8 +77,18 @@ sub import {
    }
 }
 
-our $VERSION = '1.403';
+our $VERSION = '1.404';
 $VERSION = eval $VERSION;
+
+## PDL + MCE (spawning as threads) is not stable. A comment from David Mertens
+## mentioned the fix for his PDL::Parallel::threads module. The CLONE_SKIP is
+## also needed here in order for PDL + MCE threads to not crash during exiting.
+## Thanks goes to David !!! I would have definitely struggled with this one.
+
+{
+   no warnings 'redefine';
+   sub PDL::CLONE_SKIP { 1 }
+}
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -177,6 +173,7 @@ $MCE::Signal::mce_spawned_ref  = \%_mce_spawned;
 
 ## Warnings are disabled to minimize bits of noise when user or OS signals
 ## the script to exit. e.g. MCE_script.pl < infile | head
+
 no warnings 'threads'; no warnings 'uninitialized';
 
 sub DESTROY { }
@@ -453,7 +450,7 @@ sub spawn {
    my $_use_threads = $self->{use_threads};
 
    ## Obtain lock.
-   open my $_COM_LOCK, '+>> :stdio', "$_sess_dir/com.lock";
+   open my $_COM_LOCK, '+>> :stdio', "$_sess_dir/_com.lock";
    flock $_COM_LOCK, LOCK_EX;
 
    ## Spawn workers.
@@ -868,7 +865,7 @@ sub run {
       }}
 
       ## Obtain lock 1 of 2.
-      open my $_DAT_LOCK, '+>> :stdio', "$_sess_dir/dat.lock";
+      open my $_DAT_LOCK, '+>> :stdio', "$_sess_dir/_dat.lock";
       flock $_DAT_LOCK, LOCK_EX;
 
       ## Insert the first message into the queue if defined.
@@ -897,7 +894,7 @@ sub run {
       }
 
       ## Obtain lock 2 of 2.
-      open $_COM_LOCK, '+>> :stdio', "$_sess_dir/com.lock";
+      open $_COM_LOCK, '+>> :stdio', "$_sess_dir/_com.lock";
       flock $_COM_LOCK, LOCK_EX;
 
       ## Release lock 1 of 2.
@@ -1090,7 +1087,7 @@ sub shutdown {
 
    ## Remove session directory.
    if (defined $_sess_dir) {
-      unlink "$_sess_dir/com.lock"; unlink "$_sess_dir/dat.lock";
+      unlink "$_sess_dir/_com.lock"; unlink "$_sess_dir/_dat.lock";
       rmdir  "$_sess_dir";
 
       delete $_mce_sess_dir{$_sess_dir};
@@ -1234,8 +1231,9 @@ sub next {
    return;
 }
 
-## Return the (Task ID), (Task Worker ID), or (MCE Worker ID).
+## Return the (Session Dir), (Task ID), (Task Worker ID), or (MCE Worker ID).
 
+sub sess_dir   { my MCE $self = $_[0]; @_ = (); return $self->{_sess_dir};  }
 sub task_id    { my MCE $self = $_[0]; @_ = (); return $self->{_task_id};   }
 sub task_wid   { my MCE $self = $_[0]; @_ = (); return $self->{_task_wid};  }
 sub wid        { my MCE $self = $_[0]; @_ = (); return $self->{_wid};       }
@@ -2775,8 +2773,8 @@ sub _worker_main {
 
    _do_send_init($self);
 
-   open $_COM_LOCK, '+>> :stdio', "$_sess_dir/com.lock";
-   open $_DAT_LOCK, '+>> :stdio', "$_sess_dir/dat.lock";
+   open $_COM_LOCK, '+>> :stdio', "$_sess_dir/_com.lock";
+   open $_DAT_LOCK, '+>> :stdio', "$_sess_dir/_dat.lock";
 
    ## Define status ID.
    my $_use_threads = (defined $_task->{use_threads})

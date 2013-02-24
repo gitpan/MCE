@@ -80,15 +80,18 @@ sub store_result {
 sub configure_and_spawn_mce {
 
    return MCE->new(
+
       max_workers => 7,
 
       user_func   => sub {
          my $self = $_[0];
          my $data = $self->{user_data};
          return unless (defined $data);
-         my $tam  = $data->[3];
+
+         my $tam = $data->[3];
          my $result = [ ];
          strassen_r($data->[0], $data->[1], $result, $tam);
+
          $self->do('store_result', $data->[2], $result);
       }
 

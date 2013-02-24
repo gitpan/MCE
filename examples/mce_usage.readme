@@ -7,7 +7,7 @@
 
 <> VERSION
 
-   This document describes MCE version 1.403
+   This document describes MCE version 1.404
 
 <> DESCRIPTION
 
@@ -484,6 +484,15 @@
    ## Returns the chunk_size used by MCE.
 
    my $chunk_size = $self->chunk_size();
+
+   -------------------------------------------------------------------------
+   sess_dir ( void )
+   -------------------------------------------------------------------------
+
+   ## Returns the session directory used by the MCE instance.
+   ## This is defined during spawning and removed during shutdown.
+
+   my $sess_dir = $self->sess_dir();
 
    -------------------------------------------------------------------------
    task_id ( void )

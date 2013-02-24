@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl matmult_pdl_p.pl 1024         ## Default size 512
+##    perl matmult_pdl_q.pl 1024         ## Default size 512
 ##
 
 use strict;
@@ -38,7 +38,7 @@ unless ($tam > 1) {
 my $cols = $tam;
 my $rows = $tam;
 
-my $step_size   = 32;
+my $step_size   = 16;
 my $max_workers =  8;
 
 my $mce = configure_and_spawn_mce($max_workers);
@@ -52,7 +52,7 @@ $b->share_as('right_input');
 $c->share_as('output');
 
 my $start = time();
-$mce->run(0, { sequence => [ 0, $rows - 1, $step_size ] });
+$mce->process([ 0 .. $rows - 1 ], { chunk_size => $step_size });
 my $end = time();
 
 $mce->shutdown();
@@ -76,7 +76,7 @@ sub configure_and_spawn_mce {
    return MCE->new(
 
       max_workers => $max_workers,
-      job_delay   => ($tam > 2048) ? 0.031 : undef,
+    # job_delay   => ($tam > 2048) ? 0.031 : undef,
 
       user_begin  => sub {
          my ($self) = @_;
@@ -87,7 +87,8 @@ sub configure_and_spawn_mce {
       },
 
       user_func   => sub {
-         my ($self, $seq_n, $chunk_id) = @_;
+         my ($self, $chunk_ref, $chunk_id) = @_;
+         my $seq_n = $chunk_ref->[0];
 
          my $l = $self->{l};
          my $r = $self->{r};

@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl strassen_pdl_n.pl 1024        ## Default size 512
+##    perl strassen_pdl_o.pl 1024        ## Default size 512
 ##
 
 use strict;
@@ -12,6 +12,9 @@ use Cwd qw(abs_path);
 use lib abs_path . "/../../lib";
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
+
+die "Not supported under this environment\n"
+   if ($^O eq 'cygwin' || $^O eq 'MSWin32');
 
 use Time::HiRes qw(time);
 
@@ -33,15 +36,25 @@ unless (is_power_of_two($tam)) {
    exit 1;
 }
 
-my $mce = configure_and_spawn_mce() if ($tam > 128);
+my (@mce_a, $lvl);
+
+if ($tam > 128) {
+   $lvl = 2;  $mce_a[$_] = configure_and_spawn_mce() for (1 .. 7);
+   $lvl = 1;  $mce_a[$_] = configure_and_spawn_mce() for (0 .. 0);
+}
 
 my $a = sequence $tam,$tam;
 my $b = sequence $tam,$tam;
 my $c = zeroes   $tam,$tam;
 
 my $start = time();
-strassen($a, $b, $c, $tam, $mce);
+strassen($a, $b, $c, $tam, $mce_a[0]);
 my $end = time();
+
+if (@mce_a > 0) {
+   $mce_a[$_]->shutdown for (0 .. 0);
+   $mce_a[$_]->shutdown for (1 .. 7);
+}
 
 printf STDERR "\n## $prog_name $tam: compute time: %0.03f secs\n\n",
    $end - $start;
@@ -79,7 +92,7 @@ sub configure_and_spawn_mce {
 
          my $tam = $data->[3];
          my $result = zeroes $tam,$tam;
-         strassen_r($data->[0], $data->[1], $result, $tam);
+         strassen_r($data->[0], $data->[1], $result, $tam, $self);
 
          $self->do('store_result', $data->[2], $result);
       }
@@ -101,7 +114,7 @@ sub is_power_of_two {
 sub strassen {
 
    my $a   = $_[0]; my $b = $_[1]; my $c = $_[2]; my $tam = $_[3];
-   my $mce = $_[4];
+   my $mce = $_[4]; my $mce_parent = $_[5];
 
    if ($tam <= 128) {
       ins(inplace($c), $a x $b);
@@ -143,7 +156,7 @@ sub strassen {
    undef $a11;             undef $a21; undef $a22;
    undef $b11; undef $b12; undef $b21; undef $b22;
 
-   $mce->run();
+   $mce->run(0);
 
    $p2 = $p[2]; $p3 = $p[3]; $p4 = $p[4]; $p5 = $p[5];
    $p1 = $p[1]; $p6 = $p[6]; $p7 = $p[7];
@@ -161,12 +174,17 @@ sub strassen {
 
 sub strassen_r {
 
-   my $a = $_[0]; my $b = $_[1]; my $c = $_[2]; my $tam = $_[3];
+   my $a   = $_[0]; my $b = $_[1]; my $c = $_[2]; my $tam = $_[3];
+   my $mce = $_[4];
 
    ## Perform the classic multiplication when matrix is <= 128 X 128
 
    if ($tam <= 128) {
       ins(inplace($c), $a x $b);
+      return;
+   }
+   elsif (defined $mce && $lvl < 2) {
+      strassen($a, $b, $c, $tam, $mce_a[ $mce->wid ], $mce);
       return;
    }
 

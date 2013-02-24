@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl strassen_pdl_h.pl 1024        ## Default size 512
+##    perl strassen_pdl_r.pl 1024        ## Default size 512
 ##
 
 use strict;
@@ -16,6 +16,8 @@ my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 use Time::HiRes qw(time);
 
 use PDL;
+use PDL::Parallel::threads qw(retrieve_pdls free_pdls);
+
 use PDL::IO::Storable;                   ## Required for PDL + MCE combo
 
 use MCE::Signal qw($tmp_dir -use_dev_shm);
@@ -69,15 +71,19 @@ sub store_result {
 sub configure_and_spawn_mce {
 
    return MCE->new(
-      max_workers => 4,
+
+      max_workers => 7,
 
       user_func   => sub {
          my $self = $_[0];
          my $data = $self->{user_data};
          return unless (defined $data);
-         my $tam  = $data->[3];
+
+         my $tam = $data->[3];
          my $result = zeroes $tam,$tam;
-         strassen_r($data->[0], $data->[1], $result, $tam);
+         my ($a, $b) = retrieve_pdls($data->[0], $data->[1]);
+         strassen_r($a, $b, $result, $tam);
+
          $self->do('store_result', $data->[2], $result);
       }
 
@@ -114,37 +120,59 @@ sub strassen {
    my $t1 = zeroes $nTam,$nTam;
 
    sum_m($a21, $a22, $t1, $nTam);
-   $mce->send([ $t1, $b11, 2, $nTam ]);
+   my $w_2a = $t1->copy->share_as("w_2a");
+   my $w_2b = $b11->copy->share_as("w_2b");
+   $mce->send([ "w_2a", "w_2b", 2, $nTam ]);
 
    subtract_m($b12, $b22, $t1, $nTam);
-   $mce->send([ $a11, $t1, 3, $nTam ]);
+   my $w_3a = $a11->copy->share_as("w_3a");
+   my $w_3b = $t1->copy->share_as("w_3b");
+   $mce->send([ "w_3a", "w_3b", 3, $nTam ]);
 
    subtract_m($b21, $b11, $t1, $nTam);
-   $mce->send([ $a22, $t1, 4, $nTam ]);
+   my $w_4a = $a22->copy->share_as("w_4a");
+   my $w_4b = $t1->copy->share_as("w_4b");
+   $mce->send([ "w_4a", "w_4b", 4, $nTam ]);
 
    sum_m($a11, $a12, $t1, $nTam);
-   $mce->send([ $t1, $b22, 5, $nTam ]);
-
-   $mce->run(0);     ## Do not shutdown workers  ## Process the 1st half
+   my $w_5a = $t1->copy->share_as("w_5a");
+   my $w_5b = $b22->copy->share_as("w_5b");
+   $mce->send([ "w_5a", "w_5b", 5, $nTam ]);
 
    subtract_m($a12, $a22, $t1, $nTam);
    sum_m($b21, $b22, $a12, $nTam);               ## Reuse $a12 as $t2
-   $mce->send([ $t1, $a12, 7, $nTam ]);          ## Reuse $a12 as $t2
+   my $w_7a = $t1->copy->share_as("w_7a");
+   my $w_7b = $a12->copy->share_as("w_7b");
+   $mce->send([ "w_7a", "w_7b", 7, $nTam ]);     ## Reuse $a12 as $t2
 
    subtract_m($a21, $a11, $t1, $nTam);
    sum_m($b11, $b12, $a12, $nTam);               ## Reuse $a12 as $t2
-   $mce->send([ $t1, $a12, 6, $nTam ]);          ## Reuse $a12 as $t2
+   my $w_6a = $t1->copy->share_as("w_6a");
+   my $w_6b = $a12->copy->share_as("w_6b");
+   $mce->send([ "w_6a", "w_6b", 6, $nTam ]);     ## Reuse $a12 as $t2
 
    sum_m($a11, $a22, $t1, $nTam);
    sum_m($b11, $b22, $a12, $nTam);               ## Reuse $a12 as $t2
-   $mce->send([ $t1, $a12, 1, $nTam ]);          ## Reuse $a12 as $t2
+   my $w_1a = $t1->copy->share_as("w_1a");
+   my $w_1b = $a12->copy->share_as("w_1b");
+   $mce->send([ "w_1a", "w_1b", 1, $nTam ]);     ## Reuse $a12 as $t2
 
-   $mce->run();      ## Reuse existing workers   ## Process the 2nd half
+   undef $a11;             undef $a21; undef $a22;
+   undef $b11; undef $b12; undef $b21; undef $b22;
+
+   $mce->run();
+
+   free_pdls(
+      "w_1a", "w_1b", "w_2a", "w_2b", "w_3a", "w_3b", "w_4a", "w_4b",
+      "w_5a", "w_5b", "w_6a", "w_6b", "w_7a", "w_7b"
+   );
 
    $p2 = $p[2]; $p3 = $p[3]; $p4 = $p[4]; $p5 = $p[5];
    $p1 = $p[1]; $p6 = $p[6]; $p7 = $p[7];
 
    calc_m($p1, $p2, $p3, $p4, $p5, $p6, $p7, $c, $nTam, $t1, $a12);
+
+   @p = ();
 
    return;
 }
@@ -192,17 +220,17 @@ sub strassen_r {
    sum_m($a11, $a12, $t1, $nTam);
    strassen_r($t1, $b22, $p5, $nTam);
 
-         subtract_m($p4, $p5, $t1, $nTam);       ## c11
-         ins(inplace($c), $t1, 0, 0);
+   subtract_m($p4, $p5, $t1, $nTam);             ## c11
+   ins(inplace($c), $t1, 0, 0);
 
-         sum_m($p3, $p5, $t1, $nTam);            ## c12
-         ins(inplace($c), $t1, $nTam, 0);
+   sum_m($p3, $p5, $t1, $nTam);                  ## c12
+   ins(inplace($c), $t1, $nTam, 0);
 
-         sum_m($p2, $p4, $t1, $nTam);            ## c21
-         ins(inplace($c), $t1, 0, $nTam);
+   sum_m($p2, $p4, $t1, $nTam);                  ## c21
+   ins(inplace($c), $t1, 0, $nTam);
 
-         subtract_m($p3, $p2, $t1, $nTam);       ## c22
-         ins(inplace($c), $t1, $nTam, $nTam);
+   subtract_m($p3, $p2, $t1, $nTam);             ## c22
+   ins(inplace($c), $t1, $nTam, $nTam);
 
    my $t2 = zeroes $nTam,$nTam;
 
@@ -218,18 +246,18 @@ sub strassen_r {
    sum_m($b21, $b22, $t2, $nTam);
    strassen_r($t1, $t2, $p4, $nTam);             ## Reuse $p4 to store p7
 
-         my $n1 = $nTam - 1;
-         my $n2 = $nTam + $n1;
+   my $n1 = $nTam - 1;
+   my $n2 = $nTam + $n1;
 
-         sum_m($p2, $p4, $t1, $nTam);            ## c11
-         use PDL::NiceSlice;
-         $c(0:$n1,0:$n1) += $t1;
-         no PDL::NiceSlice;
+   sum_m($p2, $p4, $t1, $nTam);                  ## c11
+   use PDL::NiceSlice;
+   $c(0:$n1,0:$n1) += $t1;
+   no PDL::NiceSlice;
 
-         sum_m($p2, $p3, $t1, $nTam);            ## c22
-         use PDL::NiceSlice;
-         $c($nTam:$n2,$nTam:$n2) += $t1;
-         no PDL::NiceSlice;
+   sum_m($p2, $p3, $t1, $nTam);                  ## c22
+   use PDL::NiceSlice;
+   $c($nTam:$n2,$nTam:$n2) += $t1;
+   no PDL::NiceSlice;
 
    return;
 }
