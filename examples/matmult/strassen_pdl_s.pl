@@ -19,7 +19,6 @@ die "Not supported under this environment\n"
 use Time::HiRes qw(time);
 
 use PDL;
-use PDL::IO::Storable;                   ## Required for PDL + MCE combo
 use PDL::IO::FastRaw;                    ## Required for MMAP IO
 
 use MCE::Signal qw($tmp_dir -use_dev_shm);
@@ -78,15 +77,18 @@ sub configure_and_spawn_mce {
       user_func   => sub {
          my $self = $_[0];
          my $data = $self->{user_data};
-         return unless (defined $data);
 
          my $tam = $data->[3];
          my $result = zeroes $tam,$tam;
-         my $a = mapfraw($data->[0], { ReadOnly => 1 });
-         my $b = mapfraw($data->[1], { ReadOnly => 1 });
+         my $a = mapfraw($data->[0], { ReadOnly => 0 });
+         my $b = mapfraw($data->[1], { ReadOnly => 0 });
 
          strassen_r($a, $b, $result, $tam, $self);
+
          undef $a; undef $b;
+
+         unlink $data->[0];  unlink $data->[0] . ".hdr";
+         unlink $data->[1];  unlink $data->[1] . ".hdr";
 
          writefraw($result, $self->sess_dir . "/p" . $data->[2]);
       }
@@ -123,15 +125,6 @@ sub strassen {
    my ($a11, $a12, $a21, $a22) = divide_m($a, $nTam);
    my ($b11, $b12, $b21, $b22) = divide_m($b, $nTam);
 
-   if (defined $mce_parent) {
-      my $p_id = $mce_parent->{user_data}->[2];
-
-      unlink $mce_parent->sess_dir . "/${p_id}a";
-      unlink $mce_parent->sess_dir . "/${p_id}a.hdr";
-      unlink $mce_parent->sess_dir . "/${p_id}b";
-      unlink $mce_parent->sess_dir . "/${p_id}b.hdr";
-   }
-
    my $t1 = zeroes $nTam,$nTam;
 
    sum_m($a21, $a22, $t1, $nTam);
@@ -155,44 +148,39 @@ sub strassen {
    $mce->send([ "$sess_dir/5a", "$sess_dir/5b", 5, $nTam ]);
 
    subtract_m($a12, $a22, $t1, $nTam);
-   sum_m($b21, $b22, $a12, $nTam);               ## Reuse $a12 as $t2
+   sum_m($b21, $b22, $a12, $nTam);               ## Reuse $a12
    writefraw($t1, "$sess_dir/7a");
    writefraw($a12, "$sess_dir/7b");
    $mce->send([ "$sess_dir/7a", "$sess_dir/7b", 7, $nTam ]);
 
    subtract_m($a21, $a11, $t1, $nTam);
-   sum_m($b11, $b12, $a12, $nTam);               ## Reuse $a12 as $t2
+   sum_m($b11, $b12, $a12, $nTam);               ## Reuse $a12
    writefraw($t1, "$sess_dir/6a");
    writefraw($a12, "$sess_dir/6b");
    $mce->send([ "$sess_dir/6a", "$sess_dir/6b", 6, $nTam ]);
 
    sum_m($a11, $a22, $t1, $nTam);
-   sum_m($b11, $b22, $a12, $nTam);               ## Reuse $a12 as $t2
+   sum_m($b11, $b22, $a12, $nTam);               ## Reuse $a12
    writefraw($t1, "$sess_dir/1a");
    writefraw($a12, "$sess_dir/1b");
    $mce->send([ "$sess_dir/1a", "$sess_dir/1b", 1, $nTam ]);
 
-   undef $a11;             undef $a21; undef $a22;
-   undef $b11; undef $b12; undef $b21; undef $b22;
-
    $mce->run(0);
 
-   $p1 = mapfraw("$sess_dir/p1", { ReadOnly => 1 });
-   $p2 = mapfraw("$sess_dir/p2", { ReadOnly => 1 });
-   $p3 = mapfraw("$sess_dir/p3", { ReadOnly => 1 });
-   $p4 = mapfraw("$sess_dir/p4", { ReadOnly => 1 });
-   $p5 = mapfraw("$sess_dir/p5", { ReadOnly => 1 });
-   $p6 = mapfraw("$sess_dir/p6", { ReadOnly => 1 });
-   $p7 = mapfraw("$sess_dir/p7", { ReadOnly => 1 });
+   $p1 = mapfraw("$sess_dir/p1", { ReadOnly => 0 });
+   $p2 = mapfraw("$sess_dir/p2", { ReadOnly => 0 });
+   $p3 = mapfraw("$sess_dir/p3", { ReadOnly => 0 });
+   $p4 = mapfraw("$sess_dir/p4", { ReadOnly => 0 });
+   $p5 = mapfraw("$sess_dir/p5", { ReadOnly => 0 });
+   $p6 = mapfraw("$sess_dir/p6", { ReadOnly => 0 });
+   $p7 = mapfraw("$sess_dir/p7", { ReadOnly => 0 });
 
    calc_m($p1, $p2, $p3, $p4, $p5, $p6, $p7, $c, $nTam, $t1, $a12);
 
-   undef $p1; undef $p2; undef $p3; undef $p4;
-   undef $p5; undef $p6; undef $p7;
+   undef $p1; undef $p2; undef $p3; undef $p4; undef $p5; undef $p6; undef $p7;
 
    for (1 .. 7) {
-      unlink "$sess_dir/p$_";
-      unlink "$sess_dir/p$_.hdr";
+      unlink "$sess_dir/p$_";  unlink "$sess_dir/p$_.hdr";
    }
 
    return;
@@ -229,15 +217,6 @@ sub strassen_r {
 
    my ($a11, $a12, $a21, $a22) = divide_m($a, $nTam);
    my ($b11, $b12, $b21, $b22) = divide_m($b, $nTam);
-
-   if (defined $mce) {
-      my $p_id = $mce->{user_data}->[2];
-
-      unlink $mce->sess_dir . "/${p_id}a";
-      unlink $mce->sess_dir . "/${p_id}a.hdr";
-      unlink $mce->sess_dir . "/${p_id}b";
-      unlink $mce->sess_dir . "/${p_id}b.hdr";
-   }
 
    ## Calculate p1 to p7
 

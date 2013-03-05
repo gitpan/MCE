@@ -16,7 +16,7 @@ my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 use Time::HiRes qw(time);
 
 use PDL;
-use PDL::IO::Storable;                   ## Required for PDL + MCE combo
+use PDL::IO::Storable;                   ## Required for passing PDL data
 
 use MCE::Signal qw($tmp_dir -use_dev_shm);
 use MCE;
@@ -75,7 +75,6 @@ sub configure_and_spawn_mce {
       user_func   => sub {
          my $self = $_[0];
          my $data = $self->{user_data};
-         return unless (defined $data);
 
          my $tam = $data->[3];
          my $result = zeroes $tam,$tam;
