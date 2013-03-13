@@ -2,7 +2,8 @@
 
 ##
 ## Usage:
-##    perl matmult_pdl_o.pl 1024         ## Default size 512
+##    perl matmult_mce_f.pl 1024 [ N_workers ]     ## Default matrix size 512
+##                                                 ## Default N_workers 8
 ##
 
 use strict;
@@ -16,20 +17,17 @@ my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 use Time::HiRes qw(time);
 
 use PDL;
-use PDL::Parallel::threads qw(retrieve_pdls);
-
-use PDL::IO::Storable;                   ## Required for passing PDL data
-use PDL::IO::FastRaw;                    ## Required for MMAP IO
+use PDL::IO::FastRaw;
 
 use MCE::Signal qw($tmp_dir -use_dev_shm);
 use MCE;
 
 my $pdl_version = sprintf("%20s", $PDL::VERSION); $pdl_version =~ s/_.*$//;
-my $chk_version = sprintf("%20s", '2.4.11');
+my $chk_version = sprintf("%20s", '2.4.10');
 
 if ($^O eq 'MSWin32' && $pdl_version lt $chk_version) {
-   print "This script requires PDL 2.4.11 or later for PDL::IO::FastRaw\n";
-   print "to work using MMAP IO under the Windows environment.\n";
+   print "This script requires PDL 2.4.10 or later for PDL::IO::FastRaw\n";
+   print "to work under the Windows environment.\n";
    exit 1;
 }
 
@@ -37,45 +35,45 @@ if ($^O eq 'MSWin32' && $pdl_version lt $chk_version) {
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
 
-my $tam = shift;
-   $tam = 512 unless (defined $tam);
+my $tam = @ARGV ? shift : 512;
+my $N_workers = @ARGV ? shift : 8;
 
-unless ($tam > 1) {
-   print STDERR "Error: $tam must be an integer greater than 1. Exiting.\n";
-   exit 1;
+if ($tam !~ /^\d+$/ || $tam < 2) {
+   die "error: $tam must be an integer greater than 1.\n";
 }
 
 my $cols = $tam;
 my $rows = $tam;
 
-my $step_size   = 32;
-my $max_workers =  8;
+my $step_size = ($tam > 2048) ? 24 : ($tam > 1024) ? 16 : 8;
 
-my $mce = configure_and_spawn_mce($max_workers);
+my $mce = configure_and_spawn_mce($N_workers);
 
-writefraw(sequence($rows,$cols), "$tmp_dir/raw.b");
-
-my $b = mapfraw "$tmp_dir/raw.b", { ReadOnly => 1 };
-my $a = sequence $cols,$rows;
-my $c = zeroes   $rows,$rows;
-
-$a->share_as('left_input');
-$b->share_as('right_input');
-$c->share_as('output');
+writefraw(sequence($cols,$rows), "$tmp_dir/a");
+writefraw(sequence($rows,$cols), "$tmp_dir/b");
+writefraw(zeroes($rows,$rows), "$tmp_dir/c");
 
 my $start = time();
-$mce->run(0, { sequence => [ 0, $rows - 1, $step_size ] });
+
+$mce->run(0, {
+   sequence => [ 0, $rows - 1, $step_size ]
+} );
+
 my $end = time();
 
 $mce->shutdown();
 
-printf STDERR "\n## $prog_name $tam: compute time: %0.03f secs\n\n",
-   $end - $start;
+## Print out the results -- use same pairs to match David Mertens' output.
+printf "\n## $prog_name $tam: compute time: %0.03f secs\n\n", $end - $start;
 
-my $dim_1 = $tam - 1;
+my $c = mapfraw("$tmp_dir/c");
 
-print "## (0,0) ", $c->at(0,0), "  ($dim_1,$dim_1) ", $c->at($dim_1,$dim_1);
-print "\n\n";
+for my $pair ([0, 0], [324, 5], [42, 172], [$rows-1, $rows-1]) {
+   my ($col, $row) = @$pair; $col %= $rows; $row %= $rows;
+   printf "## (%d, %d): %s\n", $col, $row, $c->at($col, $row);
+}
+
+print "\n";
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
@@ -83,19 +81,17 @@ print "\n\n";
 
 sub configure_and_spawn_mce {
 
-   my $max_workers = shift || 8;
+   my $N_workers = shift || 8;
 
    return MCE->new(
 
-      max_workers => $max_workers,
-      job_delay   => ($tam > 2048) ? 0.031 : undef,
+      max_workers => $N_workers,
 
       user_begin  => sub {
          my ($self) = @_;
-
-         ( $self->{l}, $self->{r}, $self->{o} ) = retrieve_pdls(
-            'left_input', 'right_input', 'output'
-         );
+         $self->{l} = mapfraw("$tmp_dir/a");
+         $self->{r} = mapfraw("$tmp_dir/b");
+         $self->{o} = mapfraw("$tmp_dir/c");
       },
 
       user_func   => sub {

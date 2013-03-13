@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl strassen_pdl_o.pl 1024        ## Default size 512
+##    perl strassen_49_f.pl 1024                   ## Default matrix size 512
 ##
 
 use strict;
@@ -19,7 +19,7 @@ die "Not supported under this environment\n"
 use Time::HiRes qw(time);
 
 use PDL;
-use PDL::IO::Storable;                   ## Required for passing PDL data
+use PDL::IO::FastRaw;
 
 use MCE::Signal qw($tmp_dir -use_dev_shm);
 use MCE;
@@ -28,72 +28,66 @@ use MCE;
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
 
-my $tam = shift;                         ## Wants power of 2 only
-   $tam = 512 unless (defined $tam);
+my $tam = @ARGV ? shift : 512;           ## Wants power of 2 only
 
 unless (is_power_of_two($tam)) {
-   print STDERR "Error: $tam must be a power of 2 integer. Exiting.\n";
-   exit 1;
+   die "error: $tam must be a power of 2 integer.\n";
 }
 
-my (@mce_a, $lvl);
-
-if ($tam > 128) {
-   $lvl = 2;  $mce_a[$_] = configure_and_spawn_mce() for (1 .. 7);
-   $lvl = 1;  $mce_a[$_] = configure_and_spawn_mce() for (0 .. 0);
-}
+my $mce = configure_and_spawn_mce() if ($tam > 128);
 
 my $a = sequence $tam,$tam;
 my $b = sequence $tam,$tam;
 my $c = zeroes   $tam,$tam;
 
 my $start = time();
-strassen($a, $b, $c, $tam, $mce_a[0]);
+strassen($a, $b, $c, $tam, $mce);
 my $end = time();
 
-if (@mce_a > 0) {
-   $mce_a[$_]->shutdown for (0 .. 0);
-   $mce_a[$_]->shutdown for (1 .. 7);
+$mce->shutdown if (defined $mce);
+
+## Print out the results -- use same pairs to match David Mertens' output.
+printf "\n## $prog_name $tam: compute time: %0.03f secs\n\n", $end - $start;
+
+for my $pair ([0, 0], [324, 5], [42, 172], [$tam-1, $tam-1]) {
+   my ($col, $row) = @$pair; $col %= $tam; $row %= $tam;
+   printf "## (%d, %d): %s\n", $col, $row, $c->at($col, $row);
 }
 
-printf STDERR "\n## $prog_name $tam: compute time: %0.03f secs\n\n",
-   $end - $start;
-
-my $dim_1 = $tam - 1;
-
-print "## (0,0) ", $c->at(0,0), "  ($dim_1,$dim_1) ", $c->at($dim_1,$dim_1);
-print "\n\n";
+print "\n";
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
 
-my @p;
-
-sub store_result {
-
-   my ($n, $result) = @_;
-
-   $p[$n] = $result;
-
-   return;
-}
-
 sub configure_and_spawn_mce {
 
    return MCE->new(
 
-      max_workers => 7,
+      max_workers => 49,
 
       user_func   => sub {
          my $self = $_[0];
          my $data = $self->{user_data};
 
-         my $tam = $data->[3];
-         my $result = zeroes $tam,$tam;
-         strassen_r($data->[0], $data->[1], $result, $tam, $self);
+         my $sess_dir = $self->sess_dir;
 
-         $self->do('store_result', $data->[2], $result);
+         my $tam = $data->[1];
+         my $result = zeroes $tam,$tam;
+
+         my $a = mapfraw("$sess_dir/". $data->[0] ."a");
+         my $b = mapfraw("$sess_dir/". $data->[0] ."b");
+
+         strassen_r($a, $b, $result, $tam);
+
+         undef $a; undef $b;
+
+         unlink "$sess_dir/". $data->[0] ."a";
+         unlink "$sess_dir/". $data->[0] ."a.hdr";
+         unlink "$sess_dir/". $data->[0] ."b";
+         unlink "$sess_dir/". $data->[0] ."b.hdr";
+
+         writefraw($result, "$sess_dir/p" . $data->[0]);
       }
 
    )->spawn;
@@ -103,7 +97,65 @@ sub is_power_of_two {
 
    my $n = $_[0];
 
+   return 0 if ($n !~ /^\d+$/); 
    return ($n != 0 && (($n & $n - 1) == 0));
+}
+
+###############################################################################
+ # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
+###############################################################################
+
+sub submit {
+
+   my $a   = $_[0]; my $b  = $_[1]; my $c  = $_[2]; my $tam = $_[3];
+   my $mce = $_[4]; my $t1 = $_[5]; my $t2 = $_[6];
+
+   my $sess_dir = $mce->sess_dir;
+
+   my $nTam = $tam / 2;
+
+   my ($a11, $a12, $a21, $a22) = divide_m($a, $nTam);
+   my ($b11, $b12, $b21, $b22) = divide_m($b, $nTam);
+
+   sum_m($a11, $a22, $t1, $nTam);
+   sum_m($b11, $b22, $t2, $nTam);
+   writefraw($t1,  "$sess_dir/". ($c + 1) ."a");
+   writefraw($t2,  "$sess_dir/". ($c + 1) ."b");
+   $mce->send([ $c + 1, $nTam ]);
+
+   sum_m($a21, $a22, $t1, $nTam);
+   writefraw($t1,  "$sess_dir/". ($c + 2) ."a");
+   writefraw($b11, "$sess_dir/". ($c + 2) ."b");
+   $mce->send([ $c + 2, $nTam ]);
+
+   subtract_m($b12, $b22, $t2, $nTam);
+   writefraw($a11, "$sess_dir/". ($c + 3) ."a");
+   writefraw($t2,  "$sess_dir/". ($c + 3) ."b");
+   $mce->send([ $c + 3, $nTam ]);
+
+   subtract_m($b21, $b11, $t2, $nTam);
+   writefraw($a22, "$sess_dir/". ($c + 4) ."a");
+   writefraw($t2,  "$sess_dir/". ($c + 4) ."b");
+   $mce->send([ $c + 4, $nTam ]);
+
+   sum_m($a11, $a12, $t1, $nTam);
+   writefraw($t1,  "$sess_dir/". ($c + 5) ."a");
+   writefraw($b22, "$sess_dir/". ($c + 5) ."b");
+   $mce->send([ $c + 5, $nTam ]);
+
+   subtract_m($a21, $a11, $t1, $nTam);
+   sum_m($b11, $b12, $t2, $nTam);
+   writefraw($t1,  "$sess_dir/". ($c + 6) ."a");
+   writefraw($t2,  "$sess_dir/". ($c + 6) ."b");
+   $mce->send([ $c + 6, $nTam ]);
+
+   subtract_m($a12, $a22, $t1, $nTam);
+   sum_m($b21, $b22, $t2, $nTam);
+   writefraw($t1,  "$sess_dir/". ($c + 7) ."a");
+   writefraw($t2,  "$sess_dir/". ($c + 7) ."b");
+   $mce->send([ $c + 7, $nTam ]);
+
+   return;
 }
 
 ###############################################################################
@@ -113,56 +165,74 @@ sub is_power_of_two {
 sub strassen {
 
    my $a   = $_[0]; my $b = $_[1]; my $c = $_[2]; my $tam = $_[3];
-   my $mce = $_[4]; my $mce_parent = $_[5];
+   my $mce = $_[4];
 
    if ($tam <= 128) {
       ins(inplace($c), $a x $b);
       return;
    }
 
-   my ($p1, $p2, $p3, $p4, $p5, $p6, $p7);
+   my $sess_dir = $mce->sess_dir;
+
+   my (@p, $p1, $p2, $p3, $p4, $p5, $p6, $p7);
    my $nTam = $tam / 2;
 
    my ($a11, $a12, $a21, $a22) = divide_m($a, $nTam);
    my ($b11, $b12, $b21, $b22) = divide_m($b, $nTam);
 
    my $t1 = zeroes $nTam,$nTam;
+   my $u1 = zeroes $nTam/2,$nTam/2;
+   my $u2 = zeroes $nTam/2,$nTam/2;
 
    sum_m($a21, $a22, $t1, $nTam);
-   $mce->send([ $t1, $b11, 2, $nTam ]);
+   submit($t1, $b11, 20, $nTam, $mce, $u1, $u2);
 
    subtract_m($b12, $b22, $t1, $nTam);
-   $mce->send([ $a11, $t1, 3, $nTam ]);
+   submit($a11, $t1, 30, $nTam, $mce, $u1, $u2);
 
    subtract_m($b21, $b11, $t1, $nTam);
-   $mce->send([ $a22, $t1, 4, $nTam ]);
+   submit($a22, $t1, 40, $nTam, $mce, $u1, $u2);
 
    sum_m($a11, $a12, $t1, $nTam);
-   $mce->send([ $t1, $b22, 5, $nTam ]);
+   submit($t1, $b22, 50, $nTam, $mce, $u1, $u2);
 
    subtract_m($a12, $a22, $t1, $nTam);
    sum_m($b21, $b22, $a12, $nTam);               ## Reuse $a12
-   $mce->send([ $t1, $a12, 7, $nTam ]);
+   submit($t1, $a12, 70, $nTam, $mce, $u1, $u2);
 
    subtract_m($a21, $a11, $t1, $nTam);
    sum_m($b11, $b12, $a12, $nTam);               ## Reuse $a12
-   $mce->send([ $t1, $a12, 6, $nTam ]);
+   submit($t1, $a12, 60, $nTam, $mce, $u1, $u2);
 
    sum_m($a11, $a22, $t1, $nTam);
    sum_m($b11, $b22, $a12, $nTam);               ## Reuse $a12
-   $mce->send([ $t1, $a12, 1, $nTam ]);
-
-   undef $a11;             undef $a21; undef $a22;
-   undef $b11; undef $b12; undef $b21; undef $b22;
+   submit($t1, $a12, 10, $nTam, $mce, $u1, $u2);
 
    $mce->run(0);
 
-   $p2 = $p[2]; $p3 = $p[3]; $p4 = $p[4]; $p5 = $p[5];
-   $p1 = $p[1]; $p6 = $p[6]; $p7 = $p[7];
+   for my $i (1 .. 7) {
+      $p[$i] = zeroes $nTam,$nTam;
 
-   calc_m($p1, $p2, $p3, $p4, $p5, $p6, $p7, $c, $nTam, $t1, $a12);
+      $p1 = mapfraw("$sess_dir/p$i"."1");
+      $p2 = mapfraw("$sess_dir/p$i"."2");
+      $p3 = mapfraw("$sess_dir/p$i"."3");
+      $p4 = mapfraw("$sess_dir/p$i"."4");
+      $p5 = mapfraw("$sess_dir/p$i"."5");
+      $p6 = mapfraw("$sess_dir/p$i"."6");
+      $p7 = mapfraw("$sess_dir/p$i"."7");
 
-   @p = ();
+      calc_m($p1, $p2, $p3, $p4, $p5, $p6, $p7, $p[$i], $nTam/2, $u1,$u2);
+
+      undef $p1; undef $p2; undef $p3; undef $p4;
+      undef $p5; undef $p6; undef $p7;
+
+      for my $j (1 .. 7) {
+         unlink "$sess_dir/p$i$j";
+         unlink "$sess_dir/p$i$j.hdr";
+      }
+   }
+
+   calc_m($p[1],$p[2],$p[3],$p[4],$p[5],$p[6],$p[7], $c, $nTam, $t1, $a12);
 
    return;
 }
@@ -173,17 +243,12 @@ sub strassen {
 
 sub strassen_r {
 
-   my $a   = $_[0]; my $b = $_[1]; my $c = $_[2]; my $tam = $_[3];
-   my $mce = $_[4];
+   my $a = $_[0]; my $b = $_[1]; my $c = $_[2]; my $tam = $_[3];
 
    ## Perform the classic multiplication when matrix is <= 128 X 128
 
    if ($tam <= 128) {
       ins(inplace($c), $a x $b);
-      return;
-   }
-   elsif (defined $mce && $lvl < 2) {
-      strassen($a, $b, $c, $tam, $mce_a[ $mce->wid ], $mce);
       return;
    }
 

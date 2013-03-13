@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl strassen_pdl_m.pl 1024        ## Default size 512
+##    perl strassen_perl.pl 1024                   ## Default matrix size 512
 ##
 
 use strict;
@@ -15,9 +15,6 @@ my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
 use Time::HiRes qw(time);
 
-use PDL;
-use PDL::IO::Storable;                   ## Required for passing PDL data
-
 use MCE::Signal qw($tmp_dir -use_dev_shm);
 use MCE;
 
@@ -25,31 +22,45 @@ use MCE;
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
 
-my $tam = shift;                         ## Wants power of 2 only
-   $tam = 512 unless (defined $tam);
+my $tam = @ARGV ? shift : 512;           ## Wants power of 2 only
 
 unless (is_power_of_two($tam)) {
-   print STDERR "Error: $tam must be a power of 2 integer. Exiting.\n";
-   exit 1;
+   die "error: $tam must be a power of 2 integer.\n";
 }
 
-my $mce = configure_and_spawn_mce() if ($tam > 128);
+my $mce = configure_and_spawn_mce() if ($tam > 64);
 
-my $a = sequence $tam,$tam;
-my $b = sequence $tam,$tam;
-my $c = zeroes   $tam,$tam;
+my $a = [ ];
+my $b = [ ];
+my $c = [ ];
+
+my $rows = $tam;
+my $cols = $tam;
+my $cnt;
+
+$cnt = 0; for (0 .. $rows - 1) {
+   $a->[$_] = [ $cnt .. $cnt + $cols - 1 ];
+   $cnt += $cols;
+}
+
+$cnt = 0; for (0 .. $cols - 1) {
+   $b->[$_] = [ $cnt .. $cnt + $rows - 1 ];
+   $cnt += $rows;
+}
 
 my $start = time();
 strassen($a, $b, $c, $tam, $mce);
 my $end = time();
 
-printf STDERR "\n## $prog_name $tam: compute time: %0.03f secs\n\n",
-   $end - $start;
+## Print out the results -- use same pairs to match David Mertens' output.
+printf "\n## $prog_name $tam: compute time: %0.03f secs\n\n", $end - $start;
 
-my $dim_1 = $tam - 1;
+for my $pair ([0, 0], [324, 5], [42, 172], [$tam-1, $tam-1]) {
+   my ($col, $row) = @$pair; $col %= $tam; $row %= $tam;
+   printf "## (%d, %d): %s\n", $col, $row, $c->[$row][$col];
+}
 
-print "## (0,0) ", $c->at(0,0), "  ($dim_1,$dim_1) ", $c->at($dim_1,$dim_1);
-print "\n\n";
+print "\n";
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
@@ -77,7 +88,7 @@ sub configure_and_spawn_mce {
          my $data = $self->{user_data};
 
          my $tam = $data->[3];
-         my $result = zeroes $tam,$tam;
+         my $result = [ ];
          strassen_r($data->[0], $data->[1], $result, $tam);
 
          $self->do('store_result', $data->[2], $result);
@@ -90,6 +101,7 @@ sub is_power_of_two {
 
    my $n = $_[0];
 
+   return 0 if ($n !~ /^\d+$/); 
    return ($n != 0 && (($n & $n - 1) == 0));
 }
 
@@ -102,8 +114,17 @@ sub strassen {
    my $a   = $_[0]; my $b = $_[1]; my $c = $_[2]; my $tam = $_[3];
    my $mce = $_[4];
 
-   if ($tam <= 128) {
-      ins(inplace($c), $a x $b);
+   if ($tam <= 64) {
+
+      for my $i (0 .. $tam - 1) {
+         for my $j (0 .. $tam - 1) {
+            $c->[$i][$j] = 0;
+            for my $k (0 .. $tam - 1) {
+               $c->[$i][$j] += $a->[$i][$k] * $b->[$k][$j];
+            }
+         }
+      }
+
       return;
    }
 
@@ -113,8 +134,8 @@ sub strassen {
    my ($a11, $a12, $a21, $a22) = divide_m($a, $nTam);
    my ($b11, $b12, $b21, $b22) = divide_m($b, $nTam);
 
-   my $t1 = zeroes $nTam,$nTam;
-   my $t2 = zeroes $nTam,$nTam;
+   my $t1 = [ ];
+   my $t2 = [ ];
 
    sum_m($a11, $a22, $t1, $nTam);
    sum_m($b11, $b22, $t2, $nTam);
@@ -140,17 +161,12 @@ sub strassen {
    sum_m($b21, $b22, $t2, $nTam);
    $mce->send([ $t1, $t2, 7, $nTam ]);
 
-   undef $a11;             undef $a21; undef $a22;
-   undef $b11; undef $b12; undef $b21; undef $b22;
-
    $mce->run();
 
    $p1 = $p[1]; $p2 = $p[2]; $p3 = $p[3]; $p4 = $p[4];
    $p5 = $p[5]; $p6 = $p[6]; $p7 = $p[7];
 
    calc_m($p1, $p2, $p3, $p4, $p5, $p6, $p7, $c, $nTam);
-
-   @p = ();
 
    return;
 }
@@ -163,10 +179,19 @@ sub strassen_r {
 
    my $a = $_[0]; my $b = $_[1]; my $c = $_[2]; my $tam = $_[3];
 
-   ## Perform the classic multiplication when matrix is <= 128 X 128
+   ## Perform the classic multiplication when matrix is <=  64 X  64
 
-   if ($tam <= 128) {
-      ins(inplace($c), $a x $b);
+   if ($tam <= 64) {
+
+      for my $i (0 .. $tam - 1) {
+         for my $j (0 .. $tam - 1) {
+            $c->[$i][$j] = 0;
+            for my $k (0 .. $tam - 1) {
+               $c->[$i][$j] += $a->[$i][$k] * $b->[$k][$j];
+            }
+         }
+      }
+
       return;
    }
 
@@ -174,12 +199,12 @@ sub strassen_r {
 
    my $nTam = $tam / 2;
 
-   my $t1 = zeroes $nTam,$nTam;  my $t2 = zeroes $nTam,$nTam;
+   my $t1 = [ ];  my $t2 = [ ];
 
-   my $p1 = zeroes $nTam,$nTam;  my $p2 = zeroes $nTam,$nTam;
-   my $p3 = zeroes $nTam,$nTam;  my $p4 = zeroes $nTam,$nTam;
-   my $p5 = zeroes $nTam,$nTam;  my $p6 = zeroes $nTam,$nTam;
-   my $p7 = zeroes $nTam,$nTam;
+   my $p1 = [ ];  my $p2 = [ ];
+   my $p3 = [ ];  my $p4 = [ ];
+   my $p5 = [ ];  my $p6 = [ ];
+   my $p7 = [ ];
 
    ## Divide the matrices into 4 sub-matrices
 
@@ -227,25 +252,28 @@ sub divide_m {
 
    my $m = $_[0]; my $tam = $_[1];
 
-   my $n1 = $tam - 1;
-   my $n2 = $tam + $n1;
+   my $m11 = [ ]; my $m12 = [ ]; my $m21 = [ ]; my $m22 = [ ];
 
-   return (
-      $m->slice("0:$n1,0:$n1"),             ## m11
-      $m->slice("$tam:$n2,0:$n1"),          ## m12
-      $m->slice("0:$n1,$tam:$n2"),          ## m21
-      $m->slice("$tam:$n2,$tam:$n2")        ## m22
-   );
+   for my $i (0 .. $tam - 1) {
+      for my $j (0 .. $tam - 1) {
+         $m11->[$i][$j] = $m->[$i][$j];
+         $m12->[$i][$j] = $m->[$i][$j + $tam];
+         $m21->[$i][$j] = $m->[$i + $tam][$j];
+         $m22->[$i][$j] = $m->[$i + $tam][$j + $tam];
+      }
+   }
+
+   return ($m11, $m12, $m21, $m22);
 }
 
 sub calc_m {
 
-   my $p1  = $_[0]; my $p2 = $_[1]; my $p3 = $_[2]; my $p4 = $_[3];
-   my $p5  = $_[4]; my $p6 = $_[5]; my $p7 = $_[6]; my $c  = $_[7];
+   my $p1  = $_[0]; my $p2  = $_[1]; my $p3  = $_[2]; my $p4  = $_[3];
+   my $p5  = $_[4]; my $p6  = $_[5]; my $p7  = $_[6]; my $c   = $_[7];
    my $tam = $_[8];
 
-   my $t1  = zeroes $tam,$tam;
-   my $t2  = zeroes $tam,$tam;
+   my $t1  = [ ];
+   my $t2  = [ ];
 
    sum_m($p1, $p4, $t1, $tam);
    sum_m($t1, $p7, $t2, $tam);
@@ -258,10 +286,14 @@ sub calc_m {
    sum_m($p3, $p5, $p1, $tam);              ## reuse $p1 to store c12
    sum_m($p2, $p4, $p3, $tam);              ## reuse $p3 to store c21
 
-   ins(inplace($c), $p7, 0, 0);             ## c11 = $p7
-   ins(inplace($c), $p1, $tam, 0);          ## c12 = $p1
-   ins(inplace($c), $p3, 0, $tam);          ## c21 = $p3
-   ins(inplace($c), $p6, $tam, $tam);       ## c22 = $p6
+   for my $i (0 .. $tam - 1) {
+      for my $j (0 .. $tam - 1) {
+         $c->[$i][$j] = $p7->[$i][$j];                   ## c11 = $p7
+         $c->[$i][$j + $tam] = $p1->[$i][$j];            ## c12 = $p1
+         $c->[$i + $tam][$j] = $p3->[$i][$j];            ## c21 = $p3
+         $c->[$i + $tam][$j + $tam] = $p6->[$i][$j];     ## c22 = $p6
+      }
+   }
 
    return;
 }
@@ -270,7 +302,11 @@ sub sum_m {
 
    my $a = $_[0]; my $b = $_[1]; my $r = $_[2]; my $tam = $_[3];
 
-   ins(inplace($r), $a + $b);
+   for my $i (0 .. $tam - 1) {
+      for my $j (0 .. $tam - 1) {
+         $r->[$i][$j] = $a->[$i][$j] + $b->[$i][$j];
+      }
+   }
 
    return;
 }
@@ -279,7 +315,11 @@ sub subtract_m {
 
    my $a = $_[0]; my $b = $_[1]; my $r = $_[2]; my $tam = $_[3];
 
-   ins(inplace($r), $a - $b);
+   for my $i (0 .. $tam - 1) {
+      for my $j (0 .. $tam - 1) {
+         $r->[$i][$j] = $a->[$i][$j] - $b->[$i][$j];
+      }
+   }
 
    return;
 }

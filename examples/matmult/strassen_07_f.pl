@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl strassen_pdl_r.pl 1024        ## Default size 512
+##    perl strassen_07_f.pl 1024                   ## Default matrix size 512
 ##
 
 use strict;
@@ -16,23 +16,28 @@ my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 use Time::HiRes qw(time);
 
 use PDL;
-use PDL::Parallel::threads qw(retrieve_pdls free_pdls);
-
-use PDL::IO::Storable;                   ## Required for passing PDL data
+use PDL::IO::FastRaw;
 
 use MCE::Signal qw($tmp_dir -use_dev_shm);
 use MCE;
+
+my $pdl_version = sprintf("%20s", $PDL::VERSION); $pdl_version =~ s/_.*$//;
+my $chk_version = sprintf("%20s", '2.4.10');
+
+if ($^O eq 'MSWin32' && $pdl_version lt $chk_version) {
+   print "This script requires PDL 2.4.10 or later for PDL::IO::FastRaw\n";
+   print "to work under the Windows environment.\n";
+   exit 1;
+}
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
 
-my $tam = shift;                         ## Wants power of 2 only
-   $tam = 512 unless (defined $tam);
+my $tam = @ARGV ? shift : 512;           ## Wants power of 2 only
 
 unless (is_power_of_two($tam)) {
-   print STDERR "Error: $tam must be a power of 2 integer. Exiting.\n";
-   exit 1;
+   die "error: $tam must be a power of 2 integer.\n";
 }
 
 my $mce = configure_and_spawn_mce() if ($tam > 128);
@@ -45,28 +50,21 @@ my $start = time();
 strassen($a, $b, $c, $tam, $mce);
 my $end = time();
 
-printf STDERR "\n## $prog_name $tam: compute time: %0.03f secs\n\n",
-   $end - $start;
+$mce->shutdown if (defined $mce);
 
-my $dim_1 = $tam - 1;
+## Print out the results -- use same pairs to match David Mertens' output.
+printf "\n## $prog_name $tam: compute time: %0.03f secs\n\n", $end - $start;
 
-print "## (0,0) ", $c->at(0,0), "  ($dim_1,$dim_1) ", $c->at($dim_1,$dim_1);
-print "\n\n";
+for my $pair ([0, 0], [324, 5], [42, 172], [$tam-1, $tam-1]) {
+   my ($col, $row) = @$pair; $col %= $tam; $row %= $tam;
+   printf "## (%d, %d): %s\n", $col, $row, $c->at($col, $row);
+}
+
+print "\n";
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
-
-my @p;
-
-sub store_result {
-
-   my ($n, $result) = @_;
-
-   $p[$n] = $result;
-
-   return;
-}
 
 sub configure_and_spawn_mce {
 
@@ -80,10 +78,18 @@ sub configure_and_spawn_mce {
 
          my $tam = $data->[3];
          my $result = zeroes $tam,$tam;
-         my ($a, $b) = retrieve_pdls($data->[0], $data->[1]);
+
+         my $a = mapfraw($data->[0]);
+         my $b = mapfraw($data->[1]);
+
          strassen_r($a, $b, $result, $tam);
 
-         $self->do('store_result', $data->[2], $result);
+         undef $a; undef $b;
+
+         unlink $data->[0];  unlink $data->[0] . ".hdr";
+         unlink $data->[1];  unlink $data->[1] . ".hdr";
+
+         writefraw($result, $self->sess_dir . "/p" . $data->[2]);
       }
 
    )->spawn;
@@ -93,6 +99,7 @@ sub is_power_of_two {
 
    my $n = $_[0];
 
+   return 0 if ($n !~ /^\d+$/); 
    return ($n != 0 && (($n & $n - 1) == 0));
 }
 
@@ -110,6 +117,8 @@ sub strassen {
       return;
    }
 
+   my $sess_dir = $mce->sess_dir;
+
    my ($p1, $p2, $p3, $p4, $p5, $p6, $p7);
    my $nTam = $tam / 2;
 
@@ -119,59 +128,62 @@ sub strassen {
    my $t1 = zeroes $nTam,$nTam;
 
    sum_m($a21, $a22, $t1, $nTam);
-   my $w_2a = $t1->copy->share_as("w_2a");
-   my $w_2b = $b11->copy->share_as("w_2b");
-   $mce->send([ "w_2a", "w_2b", 2, $nTam ]);
+   writefraw($t1, "$sess_dir/2a");
+   writefraw($b11, "$sess_dir/2b");
+   $mce->send([ "$sess_dir/2a", "$sess_dir/2b", 2, $nTam ]);
 
    subtract_m($b12, $b22, $t1, $nTam);
-   my $w_3a = $a11->copy->share_as("w_3a");
-   my $w_3b = $t1->copy->share_as("w_3b");
-   $mce->send([ "w_3a", "w_3b", 3, $nTam ]);
+   writefraw($a11, "$sess_dir/3a");
+   writefraw($t1, "$sess_dir/3b");
+   $mce->send([ "$sess_dir/3a", "$sess_dir/3b", 3, $nTam ]);
 
    subtract_m($b21, $b11, $t1, $nTam);
-   my $w_4a = $a22->copy->share_as("w_4a");
-   my $w_4b = $t1->copy->share_as("w_4b");
-   $mce->send([ "w_4a", "w_4b", 4, $nTam ]);
+   writefraw($a22, "$sess_dir/4a");
+   writefraw($t1, "$sess_dir/4b");
+   $mce->send([ "$sess_dir/4a", "$sess_dir/4b", 4, $nTam ]);
 
    sum_m($a11, $a12, $t1, $nTam);
-   my $w_5a = $t1->copy->share_as("w_5a");
-   my $w_5b = $b22->copy->share_as("w_5b");
-   $mce->send([ "w_5a", "w_5b", 5, $nTam ]);
+   writefraw($t1, "$sess_dir/5a");
+   writefraw($b22, "$sess_dir/5b");
+   $mce->send([ "$sess_dir/5a", "$sess_dir/5b", 5, $nTam ]);
 
    subtract_m($a12, $a22, $t1, $nTam);
    sum_m($b21, $b22, $a12, $nTam);               ## Reuse $a12
-   my $w_7a = $t1->copy->share_as("w_7a");
-   my $w_7b = $a12->copy->share_as("w_7b");
-   $mce->send([ "w_7a", "w_7b", 7, $nTam ]);
+   writefraw($t1, "$sess_dir/7a");
+   writefraw($a12, "$sess_dir/7b");
+   $mce->send([ "$sess_dir/7a", "$sess_dir/7b", 7, $nTam ]);
 
    subtract_m($a21, $a11, $t1, $nTam);
    sum_m($b11, $b12, $a12, $nTam);               ## Reuse $a12
-   my $w_6a = $t1->copy->share_as("w_6a");
-   my $w_6b = $a12->copy->share_as("w_6b");
-   $mce->send([ "w_6a", "w_6b", 6, $nTam ]);
+   writefraw($t1, "$sess_dir/6a");
+   writefraw($a12, "$sess_dir/6b");
+   $mce->send([ "$sess_dir/6a", "$sess_dir/6b", 6, $nTam ]);
 
    sum_m($a11, $a22, $t1, $nTam);
    sum_m($b11, $b22, $a12, $nTam);               ## Reuse $a12
-   my $w_1a = $t1->copy->share_as("w_1a");
-   my $w_1b = $a12->copy->share_as("w_1b");
-   $mce->send([ "w_1a", "w_1b", 1, $nTam ]);
+   writefraw($t1, "$sess_dir/1a");
+   writefraw($a12, "$sess_dir/1b");
+   $mce->send([ "$sess_dir/1a", "$sess_dir/1b", 1, $nTam ]);
 
-   undef $a11;             undef $a21; undef $a22;
-   undef $b11; undef $b12; undef $b21; undef $b22;
+   $mce->run(0);
 
-   $mce->run();
-
-   free_pdls(
-      "w_1a", "w_1b", "w_2a", "w_2b", "w_3a", "w_3b", "w_4a", "w_4b",
-      "w_5a", "w_5b", "w_6a", "w_6b", "w_7a", "w_7b"
-   );
-
-   $p2 = $p[2]; $p3 = $p[3]; $p4 = $p[4]; $p5 = $p[5];
-   $p1 = $p[1]; $p6 = $p[6]; $p7 = $p[7];
+   $p1 = mapfraw("$sess_dir/p1");
+   $p2 = mapfraw("$sess_dir/p2");
+   $p3 = mapfraw("$sess_dir/p3");
+   $p4 = mapfraw("$sess_dir/p4");
+   $p5 = mapfraw("$sess_dir/p5");
+   $p6 = mapfraw("$sess_dir/p6");
+   $p7 = mapfraw("$sess_dir/p7");
 
    calc_m($p1, $p2, $p3, $p4, $p5, $p6, $p7, $c, $nTam, $t1, $a12);
 
-   @p = ();
+   undef $p1; undef $p2; undef $p3; undef $p4;
+   undef $p5; undef $p6; undef $p7;
+
+   for (1 .. 7) {
+      unlink "$sess_dir/p$_";
+      unlink "$sess_dir/p$_.hdr";
+   }
 
    return;
 }

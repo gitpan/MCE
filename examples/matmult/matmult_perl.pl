@@ -2,7 +2,8 @@
 
 ##
 ## Usage:
-##    perl matmult_perl_m.pl 1024        ## Default size 512
+##    perl matmult_perl.pl 1024 [ N_workers ]      ## Default matrix size 512
+##                                                 ## Default N_workers 8
 ##
 
 use strict;
@@ -23,15 +24,14 @@ use MCE;
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
 
-my $tam = shift;
-   $tam = 512 unless (defined $tam);
+my $tam = @ARGV ? shift : 512;
+my $N_workers = @ARGV ? shift : 8;
 
-unless ($tam > 1) {
-   print STDERR "Error: $tam must be an integer greater than 1. Exiting.\n";
-   exit 1;
+if ($tam !~ /^\d+$/ || $tam < 2) {
+   die "error: $tam must be an integer greater than 1.\n";
 }
 
-my $mce  = configure_and_spawn_mce(8);
+my $mce  = configure_and_spawn_mce($N_workers);
 my $cols = $tam; my $rows = $tam;
 
 my $a = [ ]; my $b = [ ]; my $c = [ ];
@@ -67,13 +67,15 @@ my $end = time();
 
 $mce->shutdown();
 
-printf STDERR "\n## $prog_name $tam: compute time: %0.03f secs\n\n",
-   $end - $start;
+## Print out the results -- use same pairs to match David Mertens' output.
+printf "\n## $prog_name $tam: compute time: %0.03f secs\n\n", $end - $start;
 
-my $dim_1 = $tam - 1;
+for my $pair ([0, 0], [324, 5], [42, 172], [$rows-1, $rows-1]) {
+   my ($col, $row) = @$pair; $col %= $rows; $row %= $rows;
+   printf "## (%d, %d): %s\n", $col, $row, $c->[$row][$col];
+}
 
-print "## (0,0) ", $c->[0][0], "  ($dim_1,$dim_1) ", $c->[$dim_1][$dim_1];
-print "\n\n";
+print "\n";
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
@@ -90,11 +92,11 @@ sub insert_row {
 
 sub configure_and_spawn_mce {
 
-   my $max_workers = shift || 8;
+   my $N_workers = shift || 8;
 
    return MCE->new(
 
-      max_workers => $max_workers,
+      max_workers => $N_workers,
 
       user_begin  => sub {
          my ($self) = @_;

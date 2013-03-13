@@ -2,7 +2,7 @@
 
 ##
 ## Usage:
-##    perl strassen_pdl_p.pl 1024        ## Default size 512
+##    perl strassen_07_t.pl 1024                   ## Default matrix size 512
 ##
 
 use strict;
@@ -13,17 +13,10 @@ use lib abs_path . "/../../lib";
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
-BEGIN {
-   ## Let's use threads when running under this environment.
-   eval 'use threads' if ($^O eq 'MSWin32');
-}
-
-die "Not supported under this environment\n" if ($^O eq 'cygwin');
-
 use Time::HiRes qw(time);
 
 use PDL;
-use PDL::IO::Storable;                   ## Required for passing PDL data
+use PDL::Parallel::threads qw(retrieve_pdls free_pdls);
 
 use MCE::Signal qw($tmp_dir -use_dev_shm);
 use MCE;
@@ -32,12 +25,10 @@ use MCE;
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
 
-my $tam = shift;                         ## Wants power of 2 only
-   $tam = 512 unless (defined $tam);
+my $tam = @ARGV ? shift : 512;           ## Wants power of 2 only
 
 unless (is_power_of_two($tam)) {
-   print STDERR "Error: $tam must be a power of 2 integer. Exiting.\n";
-   exit 1;
+   die "error: $tam must be a power of 2 integer.\n";
 }
 
 my $mce = configure_and_spawn_mce() if ($tam > 128);
@@ -50,34 +41,27 @@ my $start = time();
 strassen($a, $b, $c, $tam, $mce);
 my $end = time();
 
-printf STDERR "\n## $prog_name $tam: compute time: %0.03f secs\n\n",
-   $end - $start;
+$mce->shutdown if (defined $mce);
 
-my $dim_1 = $tam - 1;
+## Print out the results -- use same pairs to match David Mertens' output.
+printf "\n## $prog_name $tam: compute time: %0.03f secs\n\n", $end - $start;
 
-print "## (0,0) ", $c->at(0,0), "  ($dim_1,$dim_1) ", $c->at($dim_1,$dim_1);
-print "\n\n";
+for my $pair ([0, 0], [324, 5], [42, 172], [$tam-1, $tam-1]) {
+   my ($col, $row) = @$pair; $col %= $tam; $row %= $tam;
+   printf "## (%d, %d): %s\n", $col, $row, $c->at($col, $row);
+}
+
+print "\n";
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
 
-my @p;
-
-sub store_result {
-
-   my ($n, $result) = @_;
-
-   $p[$n] = $result;
-
-   return;
-}
-
 sub configure_and_spawn_mce {
 
    return MCE->new(
 
-      max_workers => 49,
+      max_workers => 7,
 
       user_func   => sub {
          my $self = $_[0];
@@ -85,9 +69,14 @@ sub configure_and_spawn_mce {
 
          my $tam = $data->[3];
          my $result = zeroes $tam,$tam;
-         strassen_r($data->[0], $data->[1], $result, $tam);
 
-         $self->do('store_result', $data->[2], $result);
+         my ($a, $b) = retrieve_pdls($data->[0], $data->[1]);
+
+         strassen_r($a, $b, $result, $tam);
+
+         free_pdls($a, $b);
+
+         $result->share_as($self->sess_dir . "/p" . $data->[2]);
       }
 
    )->spawn;
@@ -97,49 +86,13 @@ sub is_power_of_two {
 
    my $n = $_[0];
 
+   return 0 if ($n !~ /^\d+$/); 
    return ($n != 0 && (($n & $n - 1) == 0));
 }
 
 ###############################################################################
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
-
-sub submit {
-
-   my $a   = $_[0]; my $b  = $_[1]; my $c  = $_[2]; my $tam = $_[3];
-   my $mce = $_[4]; my $t1 = $_[5]; my $t2 = $_[6];
-
-   my $nTam = $tam / 2;
-
-   my ($a11, $a12, $a21, $a22) = divide_m($a, $nTam);
-   my ($b11, $b12, $b21, $b22) = divide_m($b, $nTam);
-
-   sum_m($a11, $a22, $t1, $nTam);
-   sum_m($b11, $b22, $t2, $nTam);
-   $mce->send([ $t1, $t2, $c + 1, $nTam ]);
-
-   sum_m($a21, $a22, $t1, $nTam);
-   $mce->send([ $t1, $b11, $c + 2, $nTam ]);
-
-   subtract_m($b12, $b22, $t2, $nTam);
-   $mce->send([ $a11, $t2, $c + 3, $nTam ]);
-
-   subtract_m($b21, $b11, $t2, $nTam);
-   $mce->send([ $a22, $t2, $c + 4, $nTam ]);
-
-   sum_m($a11, $a12, $t1, $nTam);
-   $mce->send([ $t1, $b22, $c + 5, $nTam ]);
-
-   subtract_m($a21, $a11, $t1, $nTam);
-   sum_m($b11, $b12, $t2, $nTam);
-   $mce->send([ $t1, $t2, $c + 6, $nTam ]);
-
-   subtract_m($a12, $a22, $t1, $nTam);
-   sum_m($b21, $b22, $t2, $nTam);
-   $mce->send([ $t1, $t2, $c + 7, $nTam ]);
-
-   return;
-}
 
 sub strassen {
 
@@ -151,6 +104,8 @@ sub strassen {
       return;
    }
 
+   my $sess_dir = $mce->sess_dir;
+
    my ($p1, $p2, $p3, $p4, $p5, $p6, $p7);
    my $nTam = $tam / 2;
 
@@ -158,57 +113,55 @@ sub strassen {
    my ($b11, $b12, $b21, $b22) = divide_m($b, $nTam);
 
    my $t1 = zeroes $nTam,$nTam;
-   my $u1 = zeroes $nTam/2,$nTam/2;
-   my $u2 = zeroes $nTam/2,$nTam/2;
 
    sum_m($a21, $a22, $t1, $nTam);
-   submit($t1, $b11, 20, $nTam, $mce, $u1, $u2);
+   $t1->copy->share_as("$sess_dir/2a");
+   $b11->copy->share_as("$sess_dir/2b");
+   $mce->send([ "$sess_dir/2a", "$sess_dir/2b", 2, $nTam ]);
 
    subtract_m($b12, $b22, $t1, $nTam);
-   submit($a11, $t1, 30, $nTam, $mce, $u1, $u2);
+   $a11->copy->share_as("$sess_dir/3a");
+   $t1->copy->share_as("$sess_dir/3b");
+   $mce->send([ "$sess_dir/3a", "$sess_dir/3b", 3, $nTam ]);
 
    subtract_m($b21, $b11, $t1, $nTam);
-   submit($a22, $t1, 40, $nTam, $mce, $u1, $u2);
+   $a22->copy->share_as("$sess_dir/4a");
+   $t1->copy->share_as("$sess_dir/4b");
+   $mce->send([ "$sess_dir/4a", "$sess_dir/4b", 4, $nTam ]);
 
    sum_m($a11, $a12, $t1, $nTam);
-   submit($t1, $b22, 50, $nTam, $mce, $u1, $u2);
+   $t1->copy->share_as("$sess_dir/5a");
+   $b22->copy->share_as("$sess_dir/5b");
+   $mce->send([ "$sess_dir/5a", "$sess_dir/5b", 5, $nTam ]);
 
    subtract_m($a12, $a22, $t1, $nTam);
    sum_m($b21, $b22, $a12, $nTam);               ## Reuse $a12
-   submit($t1, $a12, 70, $nTam, $mce, $u1, $u2);
+   $t1->copy->share_as("$sess_dir/7a");
+   $a12->copy->share_as("$sess_dir/7b");
+   $mce->send([ "$sess_dir/7a", "$sess_dir/7b", 7, $nTam ]);
 
    subtract_m($a21, $a11, $t1, $nTam);
    sum_m($b11, $b12, $a12, $nTam);               ## Reuse $a12
-   submit($t1, $a12, 60, $nTam, $mce, $u1, $u2);
+   $t1->copy->share_as("$sess_dir/6a");
+   $a12->copy->share_as("$sess_dir/6b");
+   $mce->send([ "$sess_dir/6a", "$sess_dir/6b", 6, $nTam ]);
 
    sum_m($a11, $a22, $t1, $nTam);
    sum_m($b11, $b22, $a12, $nTam);               ## Reuse $a12
-   submit($t1, $a12, 10, $nTam, $mce, $u1, $u2);
+   $t1->share_as("$sess_dir/1a");                ## Share $t1 (no need to copy)
+   $a12->copy->share_as("$sess_dir/1b");
+   $mce->send([ "$sess_dir/1a", "$sess_dir/1b", 1, $nTam ]);
 
-   undef $a11;             undef $a21; undef $a22;
-   undef $b11; undef $b12; undef $b21; undef $b22;
+   $mce->run(0);
 
-   $mce->run();
-
-   $p1 = zeroes $nTam,$nTam;
-   $p2 = zeroes $nTam,$nTam;
-   $p3 = zeroes $nTam,$nTam;
-   $p4 = zeroes $nTam,$nTam;
-   $p5 = zeroes $nTam,$nTam;
-   $p6 = zeroes $nTam,$nTam;
-   $p7 = zeroes $nTam,$nTam;
-
-   calc_m($p[11],$p[12],$p[13],$p[14],$p[15],$p[16],$p[17],$p1,$nTam/2,$u1,$u2);
-   calc_m($p[21],$p[22],$p[23],$p[24],$p[25],$p[26],$p[27],$p2,$nTam/2,$u1,$u2);
-   calc_m($p[31],$p[32],$p[33],$p[34],$p[35],$p[36],$p[37],$p3,$nTam/2,$u1,$u2);
-   calc_m($p[41],$p[42],$p[43],$p[44],$p[45],$p[46],$p[47],$p4,$nTam/2,$u1,$u2);
-   calc_m($p[51],$p[52],$p[53],$p[54],$p[55],$p[56],$p[57],$p5,$nTam/2,$u1,$u2);
-   calc_m($p[61],$p[62],$p[63],$p[64],$p[65],$p[66],$p[67],$p6,$nTam/2,$u1,$u2);
-   calc_m($p[71],$p[72],$p[73],$p[74],$p[75],$p[76],$p[77],$p7,$nTam/2,$u1,$u2);
+   ($p1, $p2, $p3, $p4, $p5, $p6, $p7) = retrieve_pdls(
+      "$sess_dir/p1", "$sess_dir/p2", "$sess_dir/p3", "$sess_dir/p4",
+      "$sess_dir/p5", "$sess_dir/p6", "$sess_dir/p7"
+   );
 
    calc_m($p1, $p2, $p3, $p4, $p5, $p6, $p7, $c, $nTam, $t1, $a12);
 
-   @p = ();
+   free_pdls($p1, $p2, $p3, $p4, $p5, $p6, $p7);
 
    return;
 }
