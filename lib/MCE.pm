@@ -74,7 +74,7 @@ sub import {
    }
 }
 
-our $VERSION = '1.406';
+our $VERSION = '1.407';
 $VERSION = eval $VERSION;
 
 ## PDL + MCE (spawning as threads) is not stable. Thanks goes to David Mertens
@@ -163,7 +163,7 @@ my %_params_allowed_args = map { $_ => 1 } qw(
 );
 
 my $_is_cygwin    = ($^O eq 'cygwin');
-my $_is_winperl   = ($^O eq 'MSWin32');
+my $_is_MSWin32   = ($^O eq 'MSWin32');
 my $_mce_tmp_dir  = $MCE::Signal::tmp_dir;
 my %_mce_sess_dir = ();
 my %_mce_spawned  = ();
@@ -308,30 +308,24 @@ sub new {
 
    ## -------------------------------------------------------------------------
 
-   ## Limit chunk_size and max_workers -- allow for some headroom.
+   ## Limit chunk_size including max_workers -- allow for some headroom.
 
    $self->{chunk_size} = MAX_CHUNK_SIZE
       if ($self->{chunk_size} > MAX_CHUNK_SIZE);
 
-   if ($^O eq 'cygwin') {                 ## Limit to 48 threads, 24 children
-      $self->{max_workers} = 48
-         if ($self->{use_threads} && $self->{max_workers} > 48);
-      $self->{max_workers} = 24
-         if (!$self->{use_threads} && $self->{max_workers} > 24);
-   }
-   elsif ($^O eq 'MSWin32') {             ## Limit to 64 threads, 32 children
-      $self->{max_workers} = 64
-         if ($self->{use_threads} && $self->{max_workers} > 64);
-      $self->{max_workers} = 32
-         if (!$self->{use_threads} && $self->{max_workers} > 32);
+   if ($_is_cygwin || $_is_MSWin32) {
+      $self->{max_workers} = 80
+         if ($self->{use_threads} && $self->{max_workers} > 80);
+      $self->{max_workers} = 56
+         if (!$self->{use_threads} && $self->{max_workers} > 56);
    }
    else {
       if ($self->{use_threads}) {
          $self->{max_workers} = int(MAX_OPEN_FILES / 3) - 8
             if ($self->{max_workers} > int(MAX_OPEN_FILES / 3) - 8);
       } else {
-         $self->{max_workers} = MAX_USER_PROCS - 64
-            if ($self->{max_workers} > MAX_USER_PROCS - 64);
+         $self->{max_workers} = MAX_USER_PROCS - 32
+            if ($self->{max_workers} > MAX_USER_PROCS - 32);
       }
    }
 
@@ -394,6 +388,12 @@ sub spawn {
 
    ## -------------------------------------------------------------------------
 
+   ## Obtain lock.
+   open my $_COM_LOCK, '+>> :stdio', "$_sess_dir/_com.lock"
+      or die "(S) open error $_sess_dir/_com.lock: $!\n";
+
+   flock $_COM_LOCK, LOCK_EX;
+
    ## Create socket pair for communication channels between MCE and workers.
    socketpair( $self->{_com_r_sock}, $self->{_com_w_sock},
       AF_UNIX, SOCK_STREAM, PF_UNSPEC ) or die "socketpair: $!\n";
@@ -414,8 +414,9 @@ sub spawn {
 
    binmode  $self->{_out_r_sock};                 ## Set binary mode
    binmode  $self->{_out_w_sock};
-   shutdown $self->{_out_r_sock}, 1;              ## No more writing
-   shutdown $self->{_out_w_sock}, 0;              ## No more reading
+
+   CORE::shutdown $self->{_out_r_sock}, 1;        ## No more writing
+   CORE::shutdown $self->{_out_w_sock}, 0;        ## No more reading
 
    ## Create socket pairs for queue channels between MCE and workers.
    socketpair( $self->{_que_r_sock}, $self->{_que_w_sock},
@@ -423,8 +424,9 @@ sub spawn {
 
    binmode  $self->{_que_r_sock};                 ## Set binary mode
    binmode  $self->{_que_w_sock};
-   shutdown $self->{_que_r_sock}, 1;              ## No more writing
-   shutdown $self->{_que_w_sock}, 0;              ## No more reading
+
+   CORE::shutdown $self->{_que_r_sock}, 1;        ## No more writing
+   CORE::shutdown $self->{_que_w_sock}, 0;        ## No more reading
 
    ## Autoflush handles. This is done this way versus the inclusion of the
    ## large IO::Handle module just to call autoflush(1).
@@ -446,10 +448,6 @@ sub spawn {
 
    my $_max_workers = $self->{max_workers};
    my $_use_threads = $self->{use_threads};
-
-   ## Obtain lock.
-   open my $_COM_LOCK, '+>> :stdio', "$_sess_dir/_com.lock";
-   flock $_COM_LOCK, LOCK_EX;
 
    ## Spawn workers.
    $_mce_spawned{$_mce_sid} = $self;
@@ -726,6 +724,8 @@ sub restart_worker {
       $self->_dispatch_child($_wid, $_task, $_task_id, $_task_wid, $_params);
    }
 
+   select(undef, undef, undef, 0.002);
+
    return;
 }
 
@@ -892,10 +892,6 @@ sub run {
          $_task0_wids{$_} = 1 unless ($self->{_state}->[$_]->{_task_id});
       }}
 
-      ## Obtain lock 1 of 2.
-      open my $_DAT_LOCK, '+>> :stdio', "$_sess_dir/_dat.lock";
-      flock $_DAT_LOCK, LOCK_EX;
-
       ## Insert the first message into the queue if defined.
       if (defined $_first_msg) {
          local $\ = undef;
@@ -903,11 +899,14 @@ sub run {
          print $_QUE_W_SOCK pack(QUE_TEMPLATE, 0, $_first_msg);
       }
 
+      ## Obtain lock 1 of 2.
+      open my $_DAT_LOCK, '+>> :stdio', "$_sess_dir/_dat.lock"
+         or die "(R) open error $_sess_dir/_dat.lock: $!\n";
+
+      flock $_DAT_LOCK, LOCK_EX;
+
       ## Submit params data to workers.
       for (1 .. $_total_workers) {
-         select(undef, undef, undef, $_submit_delay)
-            if ($_submit_delay && $_submit_delay > 0.0);
-
          print $_COM_R_SOCK $_, $LF; chomp($_wid = <$_COM_R_SOCK>);
 
          if (!$_has_user_tasks || exists $_task0_wids{$_wid}) {
@@ -919,15 +918,24 @@ sub run {
          }
 
          <$_COM_R_SOCK>;
+
+         select(undef, undef, undef, $_submit_delay)
+            if (defined $_submit_delay && $_submit_delay > 0.0);
       }
 
+      select(undef, undef, undef, 0.003)
+         if (!defined $_submit_delay && ($_is_cygwin || $_is_MSWin32));
+
       ## Obtain lock 2 of 2.
-      open $_COM_LOCK, '+>> :stdio', "$_sess_dir/_com.lock";
+      open $_COM_LOCK, '+>> :stdio', "$_sess_dir/_com.lock"
+         or die "(R) open error $_sess_dir/_com.lock: $!\n";
+
       flock $_COM_LOCK, LOCK_EX;
 
       ## Release lock 1 of 2.
       flock $_DAT_LOCK, LOCK_UN;
       select(undef, undef, undef, 0.002);
+
       close $_DAT_LOCK; undef $_DAT_LOCK;
    }
 
@@ -1037,14 +1045,14 @@ sub send {
       my $_frozen_data  = freeze($_data_ref);
 
       ## Submit data to worker.
-      select(undef, undef, undef, $_submit_delay)
-         if ($_submit_delay && $_submit_delay > 0.0);
-
       print $_COM_R_SOCK "_data${LF}";
       <$_COM_R_SOCK>;
 
       print $_COM_R_SOCK length($_frozen_data), $LF, $_frozen_data;
       <$_COM_R_SOCK>;
+
+      select(undef, undef, undef, $_submit_delay)
+         if (defined $_submit_delay && $_submit_delay > 0.0);
    }
 
    $self->{_send_cnt} += 1;
@@ -1093,10 +1101,38 @@ sub shutdown {
    ## Notify workers to exit loop.
    local $\ = undef; local $/ = $LF;
 
+   open my $_DAT_LOCK, '+>> :stdio', "$_sess_dir/_dat.lock"
+      or die "(S) open error $_sess_dir/_dat.lock: $!\n";
+
+   flock $_DAT_LOCK, LOCK_EX;
+
    for (1 .. $_total_workers) {
       print $_COM_R_SOCK "_exit${LF}";
       <$_COM_R_SOCK>;
    }
+
+   ## Close sockets.
+   CORE::shutdown $self->{_que_r_sock}, 0;        ## Queue channels
+   CORE::shutdown $self->{_que_w_sock}, 1;
+   CORE::shutdown $self->{_out_r_sock}, 0;        ## Output channels
+   CORE::shutdown $self->{_out_w_sock}, 1;
+
+   CORE::shutdown $self->{_dat_r_sock}, 2;        ## Data channels
+   CORE::shutdown $self->{_dat_w_sock}, 2;
+   CORE::shutdown $self->{_com_r_sock}, 2;        ## Comm channels
+   CORE::shutdown $self->{_com_w_sock}, 2;
+
+   close $self->{_que_r_sock}; undef $self->{_que_r_sock};
+   close $self->{_que_w_sock}; undef $self->{_que_w_sock};
+   close $self->{_out_r_sock}; undef $self->{_out_r_sock};
+   close $self->{_out_w_sock}; undef $self->{_out_w_sock};
+
+   close $self->{_dat_r_sock}; undef $self->{_dat_r_sock};
+   close $self->{_dat_w_sock}; undef $self->{_dat_w_sock};
+   close $self->{_com_r_sock}; undef $self->{_com_r_sock};
+   close $self->{_com_w_sock}; undef $self->{_com_w_sock};
+
+   flock $_DAT_LOCK, LOCK_UN;
 
    ## Reap children/threads.
    if ( $self->{_pids} && @{ $self->{_pids} } > 0 ) {
@@ -1105,33 +1141,14 @@ sub shutdown {
          waitpid $_list->[$i], 0 if ($_list->[$i]);
       }
    }
-   if ( $self->{_thrs} && @{ $self->{_thrs} } > 0 ) {
+   elsif ( $self->{_thrs} && @{ $self->{_thrs} } > 0 ) {
       my $_list = $self->{_thrs};
       for my $i (0 .. @$_list) {
          ${ $_list->[$i] }->join() if ($_list->[$i]);
       }
    }
 
-   ## Close sockets.
-   shutdown $self->{_out_r_sock}, 0;              ## Output channels
-   shutdown $self->{_out_w_sock}, 1;
-   shutdown $self->{_que_r_sock}, 0;              ## Queue channels
-   shutdown $self->{_que_w_sock}, 1;
-
-   close $self->{_out_r_sock}; undef $self->{_out_r_sock};
-   close $self->{_out_w_sock}; undef $self->{_out_w_sock};
-   close $self->{_que_r_sock}; undef $self->{_que_r_sock};
-   close $self->{_que_w_sock}; undef $self->{_que_w_sock};
-
-   shutdown $self->{_com_r_sock}, 2;              ## Comm channels
-   shutdown $self->{_com_w_sock}, 2;
-   shutdown $self->{_dat_r_sock}, 2;              ## Data channels
-   shutdown $self->{_dat_w_sock}, 2;
-
-   close $self->{_com_r_sock}; undef $self->{_com_r_sock};
-   close $self->{_com_w_sock}; undef $self->{_com_w_sock};
-   close $self->{_dat_r_sock}; undef $self->{_dat_r_sock};
-   close $self->{_dat_w_sock}; undef $self->{_dat_w_sock};
+   close $_DAT_LOCK; undef $_DAT_LOCK;
 
    ## Remove session directory.
    if (defined $_sess_dir) {
@@ -1166,7 +1183,7 @@ sub shutdown {
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
-## Sync method.
+## Barrier sync method.
 ##
 ###############################################################################
 
@@ -1186,6 +1203,12 @@ sub sync {
 
    my $_DAT_W_SOCK = $self->{_dat_w_sock};
    my $_OUT_W_SOCK = $self->{_out_w_sock};
+   my $_sess_dir   = $self->{_sess_dir};
+
+   unless (defined $_SYN_LOCK) {
+      open $_SYN_LOCK, '+>> :stdio', "$_sess_dir/_syn.lock"
+         or die "(W) open error $_sess_dir/_syn.lock: $!\n";
+   }
 
    local $\ = undef; local $/ = $LF;
 
@@ -1196,6 +1219,8 @@ sub sync {
    flock $_DAT_LOCK, LOCK_UN;
 
    ## Wait here until all workers (task_id 0) have synced.
+   select(undef, undef, undef, 0.002) if ($_is_cygwin);
+
    flock $_SYN_LOCK, LOCK_SH;
    flock $_SYN_LOCK, LOCK_UN;
 
@@ -1259,14 +1284,13 @@ sub exit {
       my $_task_id    = $self->{_task_id};
 
       if (defined $_DAT_LOCK) {
-         my $_len  =  length($_exit_msg);
+         my $_len = length($_exit_msg);
+         local $\ = undef;
+
          $_exit_id =~ s/[\r\n][\r\n]*/ /mg;
 
-         local $\ = undef;
          flock $_DAT_LOCK, LOCK_EX;
-
-         flock $_DAT_LOCK, LOCK_EX          if ($_is_cygwin);  ## Humm, needed.
-         select(undef, undef, undef, 0.001) if ($_is_cygwin);  ## This as well.
+         select(undef, undef, undef, 0.02) if ($_is_cygwin);
 
          print $_OUT_W_SOCK OUTPUT_W_EXT,  $LF, $_task_id,          $LF;
 
@@ -1281,14 +1305,18 @@ sub exit {
    ## Exit thread/child process.
    $SIG{__DIE__} = $SIG{__WARN__} = sub { };
 
+   if (defined $_SYN_LOCK) {
+      close $_SYN_LOCK; undef $_SYN_LOCK;
+   }
    close $_DAT_LOCK; undef $_DAT_LOCK;
    close $_COM_LOCK; undef $_COM_LOCK;
-   close $_SYN_LOCK; under $_SYN_LOCK;
-
-   threads->exit($_exit_status) if ($_has_threads && threads->can('exit'));
 
    close STDERR; close STDOUT;
-   kill 9, $$ unless ($_is_winperl);
+
+   threads->exit($_exit_status)
+      if ($_has_threads && threads->can('exit'));
+
+   kill 9, $$ unless ($_is_MSWin32);
 
    CORE::exit($_exit_status);
 }
@@ -1803,6 +1831,7 @@ sub _validate_args_s {
 
    my ($_has_user_tasks, $_on_post_exit, $_on_post_run, $_task_id);
    my ($_exit_wid, $_exit_pid, $_exit_status, $_exit_id, $_sync_cnt);
+   my ($_DAT_LOCK, $_SYN_LOCK, $_sess_dir);
 
    ## Create hash structure containing various output functions.
    my %_output_function = (
@@ -2169,6 +2198,15 @@ sub _validate_args_s {
          local $\ = undef;
 
          if (!defined $_sync_cnt || $_sync_cnt == 0) {
+            unless (defined $_SYN_LOCK) {
+               open $_SYN_LOCK, '+>> :stdio', "$_sess_dir/_syn.lock"
+                  or die "(O) open error $_sess_dir/_syn.lock: $!\n";
+            }
+            unless (defined $_DAT_LOCK) {
+               open $_DAT_LOCK, '+>> :stdio', "$_sess_dir/_dat.lock"
+                  or die "(O) open error $_sess_dir/_dat.lock: $!\n";
+            }
+
             flock $_SYN_LOCK, LOCK_EX;
             $_sync_cnt = 0;
          }
@@ -2212,6 +2250,7 @@ sub _validate_args_s {
       $_user_output  = $self->{user_output};
       $_user_error   = $self->{user_error};
       $_single_dim   = $self->{_single_dim};
+      $_sess_dir     = $self->{_sess_dir};
 
       $_has_user_tasks = (defined $self->{user_tasks});
       $_aborted = $_chunk_id = $_eof_flag = 0;
@@ -2271,9 +2310,6 @@ sub _validate_args_s {
       ## Exit loop when all workers have completed or ended.
       my $_func;
 
-      open $_DAT_LOCK, '+>> :stdio', $self->{_sess_dir} . '/_dat.lock';
-      open $_SYN_LOCK, '+>> :stdio', $self->{_sess_dir} . '/_syn.lock';
-
       while (1) {
          $_func = <$_OUT_R_SOCK>;
          next unless (defined $_func);
@@ -2284,8 +2320,12 @@ sub _validate_args_s {
          }
       }
 
-      close $_SYN_LOCK; undef $_SYN_LOCK;
-      close $_DAT_LOCK; undef $_DAT_LOCK;
+      if (defined $_DAT_LOCK) {
+         close $_DAT_LOCK; undef $_DAT_LOCK;
+      }
+      if (defined $_SYN_LOCK) {
+         close $_SYN_LOCK; undef $_SYN_LOCK;
+      }
 
       ## Call on_post_run callback.
       $_on_post_run->($self, $self->{_status}) if (defined $_on_post_run);
@@ -2903,7 +2943,7 @@ sub _worker_loop {
             undef $_buffer;
 
             select(undef, undef, undef, $_job_delay * $_wid)
-               if ($_job_delay && $_job_delay > 0.0);
+               if (defined $_job_delay && $_job_delay > 0.0);
 
             $self->_worker_do({ });
          }
@@ -2929,7 +2969,7 @@ sub _worker_loop {
       next if ($_response eq '_data');
 
       ## Wait until MCE completes params submission to all workers.
-      flock $_DAT_LOCK, LOCK_SH;
+      flock $_DAT_LOCK, LOCK_SH or die "(L) cannot obtain shared lock: $!\n";
       flock $_DAT_LOCK, LOCK_UN;
 
       ## Update ID. Process request.
@@ -2937,12 +2977,12 @@ sub _worker_loop {
          unless (defined $self->{user_tasks});
 
       select(undef, undef, undef, $_job_delay * $_wid)
-         if ($_job_delay && $_job_delay > 0.0);
+         if (defined $_job_delay && $_job_delay > 0.0);
 
       $self->_worker_do($_params_ref); undef $_params_ref;
 
       ## Wait until remaining workers complete processing.
-      flock $_COM_LOCK, LOCK_SH;
+      flock $_COM_LOCK, LOCK_SH or die "(L) cannot obtain shared lock: $!\n";
       flock $_COM_LOCK, LOCK_UN;
    }
 
@@ -2971,12 +3011,27 @@ sub _worker_main {
    ## Commented out -- fails with the 'forks' module under FreeBSD.
    ## die "Private method called" unless (caller)[0]->isa( ref($self) );
 
+   ## Define status ID.
+   my $_use_threads = (defined $_task->{use_threads})
+      ? $_task->{use_threads} : $self->{use_threads};
+
+   if ($_has_threads && $_use_threads) {
+      $self->{_exit_pid} = "TID_" . threads->tid();
+   } else {
+      $self->{_exit_pid} = "PID_" . $$;
+   }
+
+   ## Define handlers.
    $SIG{PIPE} = \&_NOOP;
 
    $SIG{__DIE__} = sub {
-      CORE::die(@_) if $^S;         ## Direct to CORE::die if executing an eval
+      ## For threads, $^S is 1 when "not" eval'ing a die statement.
+      unless ($_has_threads && $_use_threads) {
+         CORE::die(@_) if $^S;    ## Direct to CORE::die if executing an eval
+      }
       local $SIG{__DIE__} = sub { };
       local $\ = undef; print STDERR $_[0];
+
       $self->exit(255, $_[0]);
    };
 
@@ -3002,23 +3057,13 @@ sub _worker_main {
 
    _do_send_init($self);
 
-   open $_COM_LOCK, '+>> :stdio', "$_sess_dir/_com.lock";
-   open $_DAT_LOCK, '+>> :stdio', "$_sess_dir/_dat.lock";
-   open $_SYN_LOCK, '+>> :stdio', "$_sess_dir/_syn.lock";
-
-   ## Define status ID.
-   my $_use_threads = (defined $_task->{use_threads})
-      ? $_task->{use_threads} : $self->{use_threads};
-
-   if ($_has_threads && $_use_threads) {
-      $self->{_exit_pid} = "TID_" . threads->tid();
-   } else {
-      $self->{_exit_pid} = "PID_" . $$;
-   }
+   open $_DAT_LOCK, '+>> :stdio', "$_sess_dir/_dat.lock"
+      or die "(W) open error $_sess_dir/_dat.lock: $!\n";
+   open $_COM_LOCK, '+>> :stdio', "$_sess_dir/_com.lock"
+      or die "(W) open error $_sess_dir/_com.lock: $!\n";
 
    ## Undef vars not required after being spawned.
-   $self->{_com_r_sock} = $self->{_dat_r_sock} = $self->{_out_r_sock} =
-      $self->{flush_file} = $self->{flush_stderr} = $self->{flush_stdout} =
+   $self->{flush_file} = $self->{flush_stderr} = $self->{flush_stdout} =
       $self->{on_post_exit} = $self->{on_post_run} = $self->{stderr_file} =
       $self->{stdout_file} = $self->{user_error} = $self->{user_output} =
       $self->{user_data} =
@@ -3043,12 +3088,13 @@ sub _worker_main {
       print $_COM_W_SOCK $LF;
    }
 
-   ## Wait until MCE completes spawning or worker completes running.
-   flock $_COM_LOCK, LOCK_SH;
+   ## Wait until MCE completes spawning or running.
+   flock $_COM_LOCK, LOCK_SH or die "(M) cannot obtain shared lock: $!\n";
    flock $_COM_LOCK, LOCK_UN;
 
    ## Enter worker loop.
    my $_status = $self->_worker_loop();
+
    delete $_mce_spawned{ $self->{_mce_sid} };
 
    ## Wait until MCE completes exit notification.
@@ -3059,9 +3105,13 @@ sub _worker_main {
       flock $_DAT_LOCK, LOCK_UN;
    };
 
+   if (defined $_SYN_LOCK) {
+      close $_SYN_LOCK; undef $_SYN_LOCK;
+   }
    close $_DAT_LOCK; undef $_DAT_LOCK;
    close $_COM_LOCK; undef $_COM_LOCK;
-   close $_SYN_LOCK; undef $_SYN_LOCK;
+
+   close STDERR; close STDOUT;
 
    return;
 }
@@ -3081,9 +3131,6 @@ sub _dispatch_child {
 
    die "Private method called" unless (caller)[0]->isa( ref($self) );
 
-   select(undef, undef, undef, $self->{spawn_delay})
-      if ($self->{spawn_delay} && $self->{spawn_delay} > 0.0);
-
    my $_pid = fork();
 
    _croak("MCE::_dispatch_child: Failed to spawn worker $_wid: $!")
@@ -3092,9 +3139,7 @@ sub _dispatch_child {
    unless ($_pid) {
       _worker_main($self, $_wid, $_task, $_task_id, $_task_wid, $_params);
 
-      close STDERR; close STDOUT;
-      kill 9, $$ unless ($_is_winperl);
-
+      kill 9, $$ unless ($_is_MSWin32);
       CORE::exit();
    }
 
@@ -3109,6 +3154,9 @@ sub _dispatch_child {
 
       push @{ $self->{_pids} }, $_pid;
    }
+
+   select(undef, undef, undef, $self->{spawn_delay})
+      if (defined $self->{spawn_delay} && $self->{spawn_delay} > 0.0);
 
    return;
 }
@@ -3127,9 +3175,6 @@ sub _dispatch_thread {
    @_ = ();
 
    die "Private method called" unless (caller)[0]->isa( ref($self) );
-
-   select(undef, undef, undef, $self->{spawn_delay})
-      if ($self->{spawn_delay} && $self->{spawn_delay} > 0.0);
 
    my $_thr = threads->create( \&_worker_main,
       $self, $_wid, $_task, $_task_id, $_task_wid, $_params
@@ -3151,6 +3196,9 @@ sub _dispatch_thread {
       push @{ $self->{_thrs} }, \$_thr;
       push @{ $self->{_tids} }, $_thr->tid();
    }
+
+   select(undef, undef, undef, $self->{spawn_delay})
+      if (defined $self->{spawn_delay} && $self->{spawn_delay} > 0.0);
 
    return;
 }
