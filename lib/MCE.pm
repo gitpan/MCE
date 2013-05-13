@@ -74,7 +74,7 @@ sub import {
    }
 }
 
-our $VERSION = '1.408';
+our $VERSION = '1.409';
 $VERSION = eval $VERSION;
 
 ## PDL + MCE (spawning as threads) is not stable. Thanks goes to David Mertens
@@ -1869,8 +1869,16 @@ sub _validate_args_s {
 
          $self->{_total_running} -= 1;
 
+         if ($_has_user_tasks && $_task_id >= 0) {
+            $self->{_task}->[$_task_id]->{_total_running} -= 1;
+         }
+
          if (defined $_syn_flag && defined $_sync_cnt && $_sync_cnt != 0) {
-            if ($_sync_cnt == $self->{_total_running}) {
+            my $_total_running = ($_has_user_tasks)
+               ? $self->{_task}->[0]->{_total_running}
+               : $self->{_total_running};
+
+            if ($_sync_cnt == $_total_running) {
                select(undef, undef, undef, 0.100) if ($_is_cygwin);
                flock $_SYN_LOCK, LOCK_UN;
                undef $_syn_flag;
@@ -1879,8 +1887,6 @@ sub _validate_args_s {
 
          ## Call on task_end if the last worker for the task.
          if ($_has_user_tasks && $_task_id >= 0) {
-            $self->{_task}->[$_task_id]->{_total_running} -= 1;
-
             unless ($self->{_task}->[$_task_id]->{_total_running}) {
                if (defined $self->{user_tasks}->[$_task_id]->{task_end}) {
                   $self->{user_tasks}->[$_task_id]->{task_end}();
@@ -1906,7 +1912,11 @@ sub _validate_args_s {
          }
 
          if (defined $_syn_flag && defined $_sync_cnt && $_sync_cnt != 0) {
-            if ($_sync_cnt == $self->{_total_running}) {
+            my $_total_running = ($_has_user_tasks)
+               ? $self->{_task}->[0]->{_total_running}
+               : $self->{_total_running};
+
+            if ($_sync_cnt == $_total_running) {
                select(undef, undef, undef, 0.100) if ($_is_cygwin);
                flock $_DAT_LOCK, LOCK_EX;
                flock $_SYN_LOCK, LOCK_UN;
@@ -2432,6 +2442,9 @@ sub _worker_read_handle {
 
    die "Private method called" unless (caller)[0]->isa( ref($self) );
 
+   _croak("MCE::_worker_read_handle: 'user_func' is not specified")
+      unless (defined $self->{user_func});
+
    my $_QUE_R_SOCK  = $self->{_que_r_sock};
    my $_QUE_W_SOCK  = $self->{_que_w_sock};
    my $_chunk_size  = $self->{chunk_size};
@@ -2569,6 +2582,9 @@ sub _worker_request_chunk {
 
    die "Private method called" unless (caller)[0]->isa( ref($self) );
 
+   _croak("MCE::_worker_request_chunk: 'user_func' is not specified")
+      unless (defined $self->{user_func});
+
    my $_OUT_W_SOCK  = $self->{_out_w_sock};
    my $_DAT_W_SOCK  = $self->{_dat_w_sock};
    my $_single_dim  = $self->{_single_dim};
@@ -2653,17 +2669,20 @@ sub _worker_request_chunk {
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
-## Worker process -- Sequence (distribution via bank-teller queuing model).
+## Worker process -- Sequence Queue (distribution via bank queuing model).
 ##
 ###############################################################################
 
-sub _worker_sequence {
+sub _worker_sequence_queue {
 
    my MCE $self = $_[0];
 
    @_ = ();
 
    die "Private method called" unless (caller)[0]->isa( ref($self) );
+
+   _croak("MCE::_worker_sequence_queue: 'user_func' is not specified")
+      unless (defined $self->{user_func});
 
    my $_QUE_R_SOCK = $self->{_que_r_sock};
    my $_QUE_W_SOCK = $self->{_que_w_sock};
@@ -2760,6 +2779,9 @@ sub _worker_sequence_generator {
    @_ = ();
 
    die "Private method called" unless (caller)[0]->isa( ref($self) );
+
+   _croak("MCE::_worker_sequence_generator: 'user_func' is not specified")
+      unless (defined $self->{user_func});
 
    my $_max_workers = $self->{max_workers};
    my $_chunk_size  = $self->{chunk_size};
@@ -2894,7 +2916,7 @@ sub _worker_do {
 
    ## Call worker function.
    if ($_run_mode eq 'sequence') {
-      $self->_worker_sequence();
+      $self->_worker_sequence_queue();
    }
    elsif (defined $self->{sequence}) {
       $self->_worker_sequence_generator();
