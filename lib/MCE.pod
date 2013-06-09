@@ -5,7 +5,7 @@ MCE - Many-Core Engine for Perl. Provides parallel processing capabilities.
 
 =head1 VERSION
 
-This document describes MCE version 1.410
+This document describes MCE version 1.411
 
 =head1 DESCRIPTION
 
@@ -16,10 +16,12 @@ a bank queuing model. Imagine the line being the data and bank-tellers the
 parallel workers. MCE enhances that model by adding the ability to chunk
 the next n elements from the input stream to the next available worker.
 
-Both chunking and input are optional in MCE. One can simply use MCE to
-have many workers run in parallel.
+Both chunking and input are optional in MCE. One can simply use MCE to have
+many workers run in parallel.
 
 =head1 SYNOPSIS
+
+This is a simplistic use case of MCE running with 4 workers.
 
    use MCE;
 
@@ -40,6 +42,37 @@ have many workers run in parallel.
    Hello from 2
    Hello from 4
 
+=head2 EXPORT_CONST
+
+The anonymous user_func above can be written using one less line. There are
+3 constants defined in MCE which are exportable. Using the constants in lieu
+of 0,1,2 makes it more legible when accessing the array elements.
+
+=head3 SELF CHUNK CID
+
+   ## The following exports SELF => 0, CHUNK => 1, CID => 2
+
+   use MCE EXPORT_CONST => 1;
+
+   user_func => sub {
+      print "Hello from ", $_[SELF]->wid, "\n";
+   }
+
+=head2 OVERRIDE
+
+In addition to EXPORT_CONST, five additional arguments can be passed to MCE.
+This allows one to override the default configured in MCE.pm.
+
+   use Sereal qw(encode_sereal decode_sereal);
+
+   use MCE MAX_WORKERS => 4,                    ## Default 1
+           CHUNK_SIZE  => 100,                  ## Default 1
+           TMP_DIR     => "/path/to/app/tmp",   ## $MCE::Signal::tmp_dir
+           FREEZE      => \&encode_sereal,      ## \&Storable::freeze
+           THAW        => \&decode_sereal;      ## \&Storable::thaw
+
+   my $mce = MCE->new( ... );
+
 =head2 new ( [ options ] )
 
 Below, a new instance is configured with all available options.
@@ -48,32 +81,16 @@ Below, a new instance is configured with all available options.
 
    my $mce = MCE->new(
 
-      tmp_dir      => $tmp_dir,
+      max_workers  => 8,                 ## Default $MCE::MAX_WORKERS
 
-          ## Default is $MCE::Signal::tmp_dir which points to
-          ## $ENV{TEMP} if defined. Otherwise, tmp_dir points
-          ## to a location under /tmp.
+          ## Number of workers to spawn. This can be set automatically
+          ## with MCE 1.411 and later releases.
 
-      max_workers  => 8,                 ## Default is 1
+          ## max_workers => 'auto-1',    ## MCE::Util::get_ncpu() - 1
+          ## max_workers => 'auto+3',    ## MCE::Util::get_ncpu() + 3
+          ## max_workers => 'auto',      ## MCE::Util::get_ncpu()
 
-          ## Number of workers to spawn.
-
-      input_data   => $input_file,       ## Default is undef
-      RS           => "\n::\n",          ## Default is undef
-
-          ## input_data => '/path/to/file' for input file
-          ## input_data => \@array for input array
-          ## input_data => \*FILE_HNDL for file handle
-          ## input_data => \$scalar to treat like a file
-
-          ## Use the sequence option if simply wanting to loop
-          ## through a sequence of numbers instead.
-
-          ## Release 1.4 and later allows one to specify the
-          ## record separator (RS) applicable to input files,
-          ## file handles, and scalar references.
-
-      chunk_size   => 2000,              ## Default is 1
+      chunk_size   => 2000,              ## Default $MCE::CHUNK_SIZE
 
           ## Less than or equal to 8192 is number of records.
           ## Greater than 8192 is number of bytes. MCE reads
@@ -87,8 +104,39 @@ Below, a new instance is configured with all available options.
           ## Chunk_size is set to 1 for $self->foreach and
           ## the $self->forseq methods.
 
-      use_slurpio  => 1,                 ## Default is 0
-      use_threads  => 1,                 ## Default is 0 or 1
+      tmp_dir      => $tmp_dir,          ## Default $MCE::TMP_DIR
+
+          ## Default is $MCE::Signal::tmp_dir which points to
+          ## $ENV{TEMP} if defined. Otherwise, tmp_dir points
+          ## to a location under /tmp.
+
+      freeze       => \&encode_sereal,   ## Default $MCE::FREEZE
+      thaw         => \&decode_sereal,   ## Default $MCE::THAW
+
+          ## Release 1.411 allows freeze and thaw to be overridden.
+          ## Just include a serialization module prior to loading MCE.
+
+          ## use Sereal qw(encode_sereal decode_sereal);
+          ## use JSON::XS qw(encode_json decode_json);
+          ## use MCE;
+
+      input_data   => $input_file,       ## Default undef
+      RS           => "\n::\n",          ## Default undef
+
+          ## input_data => '/path/to/file' for input file
+          ## input_data => \@array for input array
+          ## input_data => \*FILE_HNDL for file handle
+          ## input_data => \$scalar to treat like a file
+
+          ## Use the sequence option if simply wanting to loop
+          ## through a sequence of numbers instead.
+
+          ## Release 1.4 and later allows one to specify the
+          ## record separator (RS) applicable to input files,
+          ## file handles, and scalar references.
+
+      use_slurpio  => 1,                 ## Default 0
+      use_threads  => 1,                 ## Default 0 or 1
 
           ## Whether or not to enable slurpio when reading files
           ## (passes raw chunk to user function).
@@ -97,16 +145,17 @@ Below, a new instance is configured with all available options.
           ## MCE also supports threads via 2 threading libraries.
           ##
           ## The use of threads in MCE requires that you include
-          ## threads support prior to loading MCE.
+          ## threads support prior to loading MCE. The use_threads
+          ## option defaults to 1 when a thread library is present.
           ##
           ##    use threads;                  use forks;
           ##    use threads::shared;   (or)   use forks::shared;
           ##
           ##    use MCE                       use MCE;
 
-      spawn_delay  => 0.035,             ## Default is undef
-      submit_delay => 0.002,             ## Default is undef
-      job_delay    => 0.150,             ## Default is undef
+      spawn_delay  => 0.035,             ## Default undef
+      submit_delay => 0.002,             ## Default undef
+      job_delay    => 0.150,             ## Default undef
 
           ## Time to wait, in fractional seconds, before spawning
           ## each worker, parameters submission to each worker,
@@ -114,8 +163,8 @@ Below, a new instance is configured with all available options.
           ## For example, use job_delay when wanting to stagger
           ## many workers connecting to a database.
 
-      on_post_exit => \&on_post_exit,    ## Default is undef
-      on_post_run  => \&on_post_run,     ## Default is undef
+      on_post_exit => \&on_post_exit,    ## Default undef
+      on_post_run  => \&on_post_run,     ## Default undef
 
           ## Execute code block immediately after a worker exits
           ## (exit, $self->exit, or die). Execute code block after
@@ -124,16 +173,16 @@ Below, a new instance is configured with all available options.
           ## One can take action immediately after a worker exits
           ## or wait until after the job has completed.
 
-      user_args    => { env => 'test' }, ## Default is undef
+      user_args    => { env => 'test' }, ## Default undef
 
           ## MCE release 1.4 adds a new parameter to allow one to
           ## specify arbitrary arguments such as a string, an ARRAY
           ## or a HASH reference. Workers can access this directly:
           ##    my $args = $self->{user_args};
 
-      user_begin   => \&user_begin,      ## Default is undef
-      user_func    => \&user_func,       ## Default is undef
-      user_end     => \&user_end,        ## Default is undef
+      user_begin   => \&user_begin,      ## Default undef
+      user_func    => \&user_func,       ## Default undef
+      user_end     => \&user_end,        ## Default undef
 
           ## Think of user_begin, user_func, user_end like the awk
           ## scripting language:
@@ -143,26 +192,26 @@ Below, a new instance is configured with all available options.
           ## calls user_func repeatedly until no chunks remain.
           ## Afterwards, user_end is called.
 
-      user_error   => \&user_error,      ## Default is undef
-      user_output  => \&user_output,     ## Default is undef
+      user_error   => \&user_error,      ## Default undef
+      user_output  => \&user_output,     ## Default undef
 
           ## When workers call the following functions, MCE will
           ## pass the data to user_error/user_output if defined.
           ## $self->sendto('stderr', 'Sending to STDERR');
           ## $self->sendto('stdout', 'Sending to STDOUT');
 
-      stderr_file  => 'err_file',        ## Default is STDERR
-      stdout_file  => 'out_file',        ## Default is STDOUT
+      stderr_file  => 'err_file',        ## Default STDERR
+      stdout_file  => 'out_file',        ## Default STDOUT
 
           ## Or to file. User_error/user_output take precedence.
 
-      flush_file   => 1,                 ## Default is 0
-      flush_stderr => 1,                 ## Default is 0
-      flush_stdout => 1,                 ## Default is 0
+      flush_file   => 1,                 ## Default 0
+      flush_stderr => 1,                 ## Default 0
+      flush_stdout => 1,                 ## Default 0
 
           ## Flush sendto file, standard error, or standard output.
 
-      sequence     => {                  ## Default is undef
+      sequence     => {                  ## Default undef
           begin => -1, end => 1 [, step => 0.1 [, format => "4.1f" ] ]
       },
 
@@ -180,7 +229,7 @@ Below, a new instance is configured with all available options.
           ##
           ##    sequence => [ -1, 1, 0.1, "4.1f" ]
 
-      user_tasks   => [                  ## Default is undef
+      user_tasks   => [                  ## Default undef
          { ... },                        ## Options for task 0
          { ... },                        ## Options for task 1
          { ... },                        ## Options for task 2
@@ -205,8 +254,8 @@ Below, a new instance is configured with all available options.
 
 Run calls spawn, kicks off job, workers call user_begin, user_func, and
 user_end. Run shuts down workers afterwards. Call the spawn method early
-whenever the need arises for large data structures within the main
-process prior to running.
+whenever the need arises for large data structures within the main process
+prior to running.
 
    $mce->spawn();                        ## This is optional
 
@@ -229,13 +278,13 @@ process prior to running.
 
 =head2 SEQUENCE
 
-The 1.3 release and above allow workers to loop through a sequence of
-numbers in calculated mathematically without the overhead of an array.
-Sequence can be specified separately per each user_task entry unlike
-input_data. Input_data is applicable to the first task only.
+The 1.3 release and above allow workers to loop through a sequence of numbers
+in calculated mathematically without the overhead of an array. Sequence can be
+specified separately per each user_task entry unlike input_data. Input_data is
+applicable to the first task only.
 
-See a demo at the end of this documentation applying sequences with
-the user_tasks option including chunking.
+See a demo at the end of this documentation applying sequences with the
+user_tasks option including chunking.
 
 Sequence can be specified using an array or a hash reference.
 
@@ -276,18 +325,17 @@ Sequence can be specified using an array or a hash reference.
 
 =head2 USER_TASKS
 
-The 1.2 release introduced the user_tasks option to allow for multiple
-roles. This option takes an array of tasks. Each task allows for 7 sub
-options: max_workers, use_threads, user_begin, user_func, user_end,
-sequence, and chunk_size (the latter 2 coming from 1.3).
+The 1.2 release introduced the user_tasks option to allow for multiple roles.
+This option takes an array of tasks. Each task allows for 7 sub options:
+max_workers, use_threads, user_begin, user_func, user_end, sequence, and
+chunk_size (the latter 2 coming from 1.3).
 
-In addition, task_end can be specified for the manager process to run
-when all workers for that role have completed processing.
+In addition, task_end can be specified for the manager process to run when
+all workers for that role have completed processing.
 
-Forking and threading can be inter-mixed among tasks except under
-Cygwin. Input data (if defined) can be processed by the first task
-only. The run method will remain running until all workers have
-completed processing.
+Forking and threading can be inter-mixed among tasks except under Cygwin.
+Input data (if defined) can be processed by the first task only. The run
+method will remain running until all workers have completed processing.
 
 Visit this URL for further reading on the new user_tasks option.
 L<http://code.google.com/p/many-core-engine-perl/wiki/MCE_Tasks>
@@ -317,9 +365,9 @@ L<http://code.google.com/p/many-core-engine-perl/wiki/MCE_Tasks>
 
 =head2 SYNTAX for ON_POST_EXIT
 
-Often times, one may want to capture the exit status. The on_post_exit
-option, if defined, is executed immediately after a worker exits via
-exit (children only), $self->exit (both children and threads), or die.
+Often times, one may want to capture the exit status. The on_post_exit option,
+if defined, is executed immediately after a worker exits via exit (children
+only), $self->exit (both children and threads), or die.
 
 The format of $e->{pid} is PID_123 for children and THR_123 for threads.
 
@@ -373,9 +421,9 @@ completed processing or running.
 
 =head2 SYNTAX for USER_BEGIN and USER_END
 
-The user_begin and user_end options, if specified, behave similarly
-to awk 'BEGIN { ... } { ... } END { ... }'. These are called once per
-each worker during a run.
+The user_begin and user_end options, if specified, behave similarly to
+awk 'BEGIN { ... } { ... } END { ... }'. These are called once per each
+worker during a run.
 
    sub user_begin {                   ## Called once at the beginning
       my $self = shift;
@@ -403,9 +451,8 @@ each worker during a run.
 
 =head2 SYNTAX for USER_FUNC with USE_SLURPIO => 0
 
-When processing input data, MCE can pass an array or rows or a slurped
-chunk. Below, a reference to an array containing the chunk data is
-processed.
+When processing input data, MCE can pass an array or rows or a slurped chunk.
+Below, a reference to an array containing the chunk data is processed.
 
 e.g. $chunk_ref = [ record1, record2, record3, ... ]
 
@@ -450,11 +497,10 @@ Here, a reference to a scalar containing the raw chunk data is processed.
 
 =head2 SYNTAX for USER_ERROR and USER_OUTPUT
 
-Output coming from $self->sendto('stderr/stdout', ...) can be intercepted
-by specifying the user_error and user_output options. MCE on receiving
-output will instead direct to user_error and user_output in a serialized
-fashion. Handy when wanting to filter, modify, and/or direct the output
-elsewhere.
+Output coming from $self->sendto('stderr/stdout', ...) can be intercepted by
+specifying the user_error and user_output options. MCE on receiving output
+will instead direct to user_error and user_output in a serialized fashion.
+Handy when wanting to filter, modify, and/or direct the output elsewhere.
 
    sub user_error {                   ## Redirect STDERR to STDOUT
       my $error = shift;
@@ -494,8 +540,8 @@ The methods listed below are callable by the main process and workers.
 
 =head2 abort ( void )
 
-The abort method is applicable when processing input_data only. This
-causes all workers to abort after processing the current chunk.
+The abort method is applicable when processing input_data only. This causes
+all workers to abort after processing the current chunk.
 
 Workers write the next offset position to the queue socket for the next
 available worker. In essence, the abort method writes the last offset
@@ -509,6 +555,12 @@ the end of input_data has been reached and leave the chunking loop.
 Returns the chunk_size used by MCE.
 
    my $chunk_size = $self->chunk_size();
+
+=head2 max_workers ( void )
+
+Returns the value for max_workers used by MCE.
+
+   my $max_workers = $self->max_workers();
 
 =head2 sess_dir ( void )
 
@@ -539,8 +591,8 @@ Returns the temporary directory used by MCE.
 
 =head2 wid ( void )
 
-Returns the MCE worker ID. Starts at 1 per each MCE instance. The value
-is set to 0 for the manager process.
+Returns the MCE worker ID. Starts at 1 per each MCE instance. The value is
+set to 0 for the manager process.
 
    my $wid = $self->wid();
 
@@ -550,10 +602,9 @@ Methods listed below are callable by the main process only.
 
 =head2 forchunk ( $input_data [, { options } ], sub { ... } )
 
-Forchunk, foreach, and forseq are sugar methods in MCE. Workers are
-automatically spawned, the code block is executed in parallel, and
-shutdown is called. Do not use these methods if wanting workers to
-persist afterwards.
+Forchunk, foreach, and forseq are sugar methods in MCE. Workers are auto-
+matically spawned, the code block is executed in parallel, and shutdown is
+called. Do not use these methods if wanting workers to persist afterwards.
 
 Specifying options is optional. Valid options are the same as for the
 process method.
@@ -583,11 +634,10 @@ process method.
 
 =head2 foreach ( $input_data [, { options } ], sub { ... } )
 
-Foreach implies chunk_size => 1 and cannot be overwritten. Arguments
-inside the code block are the same as for user_func. This holds true
-even if chunk_size is set to 1. MCE is both a chunking engine plus a
-parallel engine all in one. Arguments within the block are the same
-whether calling foreach or forchunk.
+Foreach implies chunk_size => 1 and cannot be overwritten. Arguments inside
+the code block are the same as for user_func. This is true even if chunk_size
+is set to 1. MCE is both a chunking engine plus a parallel engine all in one.
+Arguments within the block are the same whether calling foreach or forchunk.
 
    my $mce = MCE->new(
       max_workers => $max_workers
@@ -599,8 +649,8 @@ whether calling foreach or forchunk.
       $self->sendto("stdout", "$chunk_id: $row\n");
    });
 
-Below, passing an anonymous array as input data. For example, wanting
-to parallelize a serial loop with MCE.
+Below, passing an anonymous array as input data. For example, wanting to
+parallelize a serial loop with MCE.
 
    ## Serial loops.
 
@@ -616,14 +666,14 @@ to parallelize a serial loop with MCE.
 
    $mce->foreach([ (0 .. $max - 1) ], sub {
       my ($self, $chunk_ref, $chunk_id) = @_;
-      my $i = $chunk_ref->[0];  (OR)  my $i = $chunk_id - 1;
+      my $i = $chunk_ref->[0];
       ...  ## Runs in parallel
    });
 
 =head2 forseq ( $sequence_spec [, { options } ], sub { ... } )
 
-Forseq also implies chunk_size => 1 and cannot be overwritten. Sequence
-can be specified using a hash or an array reference.
+Forseq also implies chunk_size => 1 and cannot be overwritten. Sequence can be
+specified using a hash or an array reference.
 
    my $mce = MCE->new(
       max_workers => 3
@@ -642,9 +692,9 @@ can be specified using a hash or an array reference.
 
 =head2 process ( $input_data [, { options } ] )
 
-The process method will spawn workers automatically if not already
-spawned. It will set input_data => $input_data. It calls run(0) to
-not auto-shutdown workers. Specifying options is optional.
+The process method will spawn workers automatically if not already spawned.
+It will set input_data => $input_data. It calls run(0) to not auto-shutdown
+workers. Specifying options is optional.
 
 Allowable options { key => value, ... } are:
 
@@ -653,10 +703,10 @@ Allowable options { key => value, ... } are:
    on_post_exit on_post_run sequence user_args user_begin user_end
    user_func user_error user_output use_slurpio
 
-Options remain persistent going forward unless changed. Setting
-user_begin, user_end, or user_func will cause already spawned
-workers to shutdown and re-spawn automatically. Therefore, define
-these during instantiation if possible.
+Options remain persistent going forward unless changed. Setting user_begin,
+user_end, or user_func will cause already spawned workers to shutdown and
+re-spawn automatically. Therefore, define these during instantiation if
+possible.
 
    my $mce = MCE->new( ... );
 
@@ -669,9 +719,9 @@ these during instantiation if possible.
 
 =head2 restart_worker ( $wid )
 
-One can restart a worker who has died or exited. The job never ends below
-due to restarting each time. The same wid from the worker, which has
-exited, is used (recommended).
+One can restart a worker who has died or exited. The job never ends below due
+to restarting each time. The same wid from the worker, which has exited, is
+used (recommended).
 
    my $mce = MCE->new(
 
@@ -736,9 +786,9 @@ exited, is used (recommended).
 
 =head2 run ( [ $auto_shutdown [, { options } ] ] )
 
-The run method, by default, spawns workers, processes once, and shuts
-down workers. Set $auto_shutdown to 0 when wanting workers to persist
-after running (default is 1).
+The run method, by default, spawns workers, processes once, and shuts down
+workers. Set $auto_shutdown to 0 when wanting workers to persist after
+running (default is 1).
 
 Specifying options is optional. Valid options are the same as for the
 process method.
@@ -750,17 +800,17 @@ process method.
 =head2 send ( $data_ref )
 
 The send method is useful when wanting to spawn workers early to minimize
-memory consumption and afterwards send data individually to each worker.
-One cannot send more than the total workers spawned. Workers store the
-received data as $self->{user_data}.
+memory consumption and afterwards send data individually to each worker. One
+cannot send more than the total workers spawned. Workers store the received
+data as $self->{user_data}.
 
-The data which can be sent is restricted to an ARRAY, HASH, or PDL
-reference. Workers begin processing immediately after receiving data.
-Workers set $self->{user_data} to undef after processing.
+The data which can be sent is restricted to an ARRAY, HASH, or PDL reference.
+Workers begin processing immediately after receiving data. Workers set
+$self->{user_data} to undef after processing. One cannot specify input_data,
+sequence, or user_tasks for the MCE instance to receive user data via the
+"send" method.
 
-One cannot specify input_data, sequence, or user_tasks for the MCE
-instance to receive user data via the "send" method. Passing any
-options e.g. run(0, { options }) is ignored due to workers running
+Passing any options e.g. run(0, { options }) is ignored due to workers running
 immediately after receiving user data.
 
    my $mce = MCE->new(
@@ -792,9 +842,9 @@ immediately after receiving user data.
 
 =head2 shutdown ( void )
 
-The run method will automatically spawn workers, run once, and shutdown
-workers automatically. The process method leaves workers waiting for the
-next job after processing. Call shutdown after processing all jobs.
+The run method will automatically spawn workers, run once, and shutdown workers
+automatically. The process method leaves workers waiting for the next job after
+processing. Call shutdown after processing all jobs.
 
    my $mce = MCE->new( ... );
 
@@ -812,8 +862,8 @@ next job after processing. Call shutdown after processing all jobs.
 
 =head2 spawn ( void )
 
-Workers are normally spawned automatically. The spawn method is
-beneficial when wanting to spawn workers early.
+Workers are normally spawned automatically. The spawn method is beneficial when
+wanting to spawn workers early.
 
    my $mce = MCE->new( ... );
 
@@ -821,10 +871,10 @@ beneficial when wanting to spawn workers early.
 
 =head2 status ( void )
 
-The greatest exit status is saved among workers exiting during a run.
-Call this after running or processing to check if a worker exited with
-a non-zero value. For more granularity, look at the on_post_exit or
-on_post_run options for callback support.
+The greatest exit status is saved among workers exiting during a run. Call this
+after running or processing to check if a worker exited with a non-zero value.
+For more granularity, look at the on_post_exit or on_post_run options for
+callback support.
 
    my $mce = MCE->new( ... );
 
@@ -838,11 +888,10 @@ Methods listed below are callable by workers only.
 
 =head2 do ( 'callback_func' [, $arg1, ... ] )
 
-MCE can serialized data transfers from worker processes via helper
-functions do & sendto. The main MCE thread will process these in a
-serial fashion. This utilizes the Storable Perl module for passing
-data from a worker process to the main MCE thread. The callback
-function can optionally return a reply.
+MCE can serialized data transfers from worker processes via helper functions
+do & sendto. The main MCE thread will process these in a serial fashion. This
+utilizes the Storable Perl module for passing data from a worker process to
+the main MCE thread. The callback function can optionally return a reply.
 
    [ $reply = ] $self->do('callback' [, $arg1, ... ]);
 
@@ -866,9 +915,9 @@ MCE knows if wanting a void, list, hash, or a scalar return value.
 
 =head2 exit ( [ $status [, $message [, $id ] ] ] )
 
-Worker exits entirely from MCE. $id (optional) can be used to pass the
-primary key or a string along with the message. Please look at the
-on_post_exit and on_post_run options for callback support.
+Worker exits entirely from MCE. $id (optional) can be used to pass the primary
+key or a string along with the message. Please look at the on_post_exit and
+on_post_run options for callback support.
 
    $self->exit();          ## default is 0
    $self->exit(1);
@@ -877,8 +926,8 @@ on_post_exit and on_post_run options for callback support.
 
 =head2 last ( void )
 
-Worker immediately leaves the chunking loop or user func. Called from
-inside foreach, forchunk, forseq, and user_func.
+Worker immediately leaves the chunking loop or user func. Called from inside
+foreach, forchunk, forseq, and user_func.
 
    my @list = (1 .. 80);
 
@@ -909,8 +958,8 @@ inside foreach, forchunk, forseq, and user_func.
 
 =head2 next ( void )
 
-Worker starts the next iteration of the chunking loop. Called from
-inside foreach, forchunk, forseq, and user_func.
+Worker starts the next iteration of the chunking loop. Called from inside
+foreach, forchunk, forseq, and user_func.
 
    my @list = (1 .. 80);
 
@@ -937,9 +986,9 @@ inside foreach, forchunk, forseq, and user_func.
 
 =head2 sendto ( 'to_string', $arg1, ... )
 
-The sendto method is called by workers to serialize data to standard
-output, standard error, or to end of file. The action is done by the
-main process or thread.
+The sendto method is called by workers to serialize data to standard output,
+standard error, or to end of file. The action is done by the main process or
+thread.
 
 Release 1.100 added the ability to pass multiple arguments.
 
@@ -972,15 +1021,15 @@ Passing a reference is no longer necessary beginning with 1.100.
 
    $self->sendto("stdout", @a, "\n", %h, "\n", $s, "\n");
 
-To retain 1.00x compatibility, sendto outputs the content when a
-single data argument is specified and is a reference.
+To retain 1.00x compatibility, sendto outputs the content when a single data
+argument is specified and is a reference.
 
    $self->sendto('stdout', \@array);
    $self->sendto('stderr', \$scalar);
    $self->sendto('file:/path/to/file', \@array);
 
-Otherwise, the reference for \@array and \$scalar is shown, not the
-content. Basically, output matches the print statement.
+Otherwise, the reference for \@array and \$scalar is shown, not the content.
+Basically, output matches the print statement.
 
    ## print STDOUT "hello\n", \@array, \$scalar, "\n";
 
@@ -988,13 +1037,13 @@ content. Basically, output matches the print statement.
 
 =head2 sync ( void )
 
-A barrier sync operation in the example code means any worker must stop
-at this point until all workers reach this barrier. Barrier syncing is
-useful for many computer algorithms.
+A barrier sync operation in the example code means any worker must stop at
+this point until all workers reach this barrier. Barrier syncing is useful
+for many computer algorithms.
 
 Barrier synchronization is supported for task 0 only. Note: Workers are
-assigned task_id 0 when omitting user_tasks. All workers assigned
-task_id 0 must call sync whenever barrier syncing.
+assigned task_id 0 when omitting user_tasks. All workers assigned task_id 0
+must call sync whenever barrier syncing.
 
 Barrier synchronization (sync) was added to MCE 1.406.
 
@@ -1052,14 +1101,14 @@ Barrier synchronization (sync) was added to MCE 1.406.
    c: 2
    c: 3
 
-Consider the following example. The sync operation is done inside a for
-loop along with calling the do method. A stall can occur for workers
-calling sync the 2nd or 3rd time while other workers are sending results
-via the do or sendto methods. It requires yet another semaphore lock file
-in MCE to solve this which was not done in order to keep resources low.
+Consider the following example. The sync operation is done inside a for loop
+along with calling the do method. A stall can occur for workers calling sync
+the 2nd or 3rd time while other workers are sending results via the do or
+sendto methods. It requires yet another semaphore lock file in MCE to solve
+this which was not done in order to keep resources low.
 
-Therefore, please keep this in mind when mixing $self->sync with the
-$self->do or $self->sendto methods inside a loop.
+Therefore, please keep this in mind when mixing $self->sync with the $self->do
+or $self->sendto methods inside a loop.
 
    sub user_func {
 
@@ -1114,9 +1163,9 @@ patterns and word count aggregation.
              MCE utilizes a pool of workers.
 
              Parallel::Loops:     600  Forking each @input is expensive
-             MCE foreach....:  19,000  Sends result after each @input
-             MCE forseq.....:  54,000  Loops through sequence of numbers
-             MCE forchunk...: 385,000  Chunking reduces overhead
+             MCE foreach....:  20,000  Sends result after each @input
+             MCE forseq.....:  55,000  Loops through sequence of numbers
+             MCE forchunk...: 395,000  Chunking reduces overhead
 
    matmult/matmult_base.pl, matmult_mce.pl, strassen_mce.pl
              Various matrix multiplication demonstrations benchmarking
@@ -1139,15 +1188,14 @@ patterns and word count aggregation.
 
 =head2 CHUNK_SIZE => 1 (in essence, wanting no chunking on input data)
 
-Imagine a long running process and wanting to parallelize an array
-against a pool of workers. Note: The sequence option can be used if
-simply wanting to loop through a sequence of numbers in parallel one
-number at a time.
+Imagine a long running process and wanting to parallelize an array against a
+pool of workers. Note: The sequence option can be used if simply wanting to
+loop through a sequence of numbers in parallel one number at a time.
 
-Below, a callback function for displaying results is used. The logic
-shows how one can display results immediately while still preserving
-the output order as if processing serially. The %result hash is a
-temporary cache to store results for out-of-order replies.
+Below, a callback function for displaying results is used. The logic shows how
+one can display results immediately while still preserving the output order as
+if processing serially. The %result hash is a temporary cache to store results
+for out-of-order replies.
 
    my @input_data  = (0 .. 18000 - 1);
    my $max_workers = 3;
@@ -1210,10 +1258,10 @@ temporary cache to store results for out-of-order replies.
 
 =head2 CHUNKING INPUT_DATA
 
-Chunking reduces overhead many folds. Instead of passing a single item
-from @input_data, a chunk of $chunk_size is sent to the next available
-worker. The sequence option can be used as well if simply wanting to
-loop through a sequence of numbers with chunking applied in parallel.
+Chunking reduces overhead many folds. Instead of passing a single item from
+@input_data, a chunk of $chunk_size is sent to the next available worker.
+The sequence option can be used as well if simply wanting to loop through a
+sequence of numbers with chunking applied in parallel.
 
    my @input_data  = (0 .. 385000 - 1);
    my $max_workers = 3;
@@ -1290,8 +1338,8 @@ loop through a sequence of numbers with chunking applied in parallel.
 
 One may specify the sequence option per each task. The following is taken
 directly from the seq_demo.pl example. Think of the following demonstration
-as having 3 mini-MCEs running simultaneously in parallel. Chunking can
-also be configured independently as well.
+as having 3 mini-MCEs running simultaneously in parallel. Chunking can also
+be configured independently as well.
 
    use MCE;
 
@@ -1378,13 +1426,12 @@ also be configured independently as well.
 
 =head2 MULTIPLE WORKERS RUNNING IN PARALLEL
 
-Both input_data and sequence options are optional in MCE. One can simply
-use MCE to parallelize multiple workers. The "do" & "sendto" methods can
-be used to pass data back to the manager process. One doesn't have to
-wait until the worker has completed processing to pass data back. Both
-"do" & "sendto" methods are processed serially by the main process on a
-first come, first serve basis. All 4 workers run in parallel for the
-demonstration below.
+Both input_data and sequence options are optional in MCE. One can simply use
+MCE to parallelize multiple workers. The "do" & "sendto" methods can be used
+to pass data back to the manager process. One doesn't have to wait until the
+worker has completed processing to pass data back. Both "do" & "sendto"
+methods are processed serially by the main process on a first come, first
+serve basis. All 4 workers run in parallel for the demonstration below.
 
    use MCE;
 
@@ -1467,7 +1514,7 @@ parallelizing PDL with MCE.
 
 =head1 SEE ALSO
 
-L<MCE::Signal>
+L<MCE::Signal|MCE::Signal>, L<MCE::Util|MCE::Util>
 
 =head1 SOURCE
 
@@ -1481,7 +1528,10 @@ Mario E. Roy, S<E<lt>marioeroy AT gmail DOT comE<gt>>
 
 Copyright (C) 2012-2013 by Mario E. Roy
 
-MCE is free software; you can redistribute it and/or modify it under the
-same terms as Perl itself L<http://dev.perl.org/licenses/>.
+This program is free software; you can redistribute it and/or modify it
+under the terms of either: the GNU General Public License as published
+by the Free Software Foundation; or the Artistic License.
+
+See L<http://dev.perl.org/licenses/> for more information.
 
 =cut
