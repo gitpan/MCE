@@ -55,7 +55,7 @@ BEGIN {
    }
 }
 
-our $VERSION = '1.412'; $VERSION = eval $VERSION;
+our $VERSION = '1.413'; $VERSION = eval $VERSION;
 
 ## PDL + MCE (spawning as threads) is not stable. Thanks goes to David Mertens
 ## for reporting on how he fixed it for his PDL::Parallel::threads module. The
@@ -1511,7 +1511,7 @@ sub do {
          $_ncpu = MCE::Util::get_ncpu() unless $_ncpu;
 
          if ($1 && $2) {
-            local @_; $self->{max_workers} = eval "int($_ncpu $1 $2 + 0.5)";
+            local $@; $self->{max_workers} = eval "int($_ncpu $1 $2 + 0.5)";
 
             $self->{max_workers} = 1
                if (! $self->{max_workers} || $self->{max_workers} < 1);
