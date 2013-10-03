@@ -1,7 +1,18 @@
+###############################################################################
+## ----------------------------------------------------------------------------
+## MCE::Core::Input::Generator - Sequence of numbers (for task_id > 0).
+##
+## This package provides a sequence of numbers used internally by the worker
+## process. Distribution is divided equally among workers. This allows sequence
+## to be configured independently among multiple user tasks.
+##
+## There is no public API.
+##
+###############################################################################
 
 package MCE::Core::Input::Generator;
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -52,6 +63,8 @@ sub _worker_sequence_generator {
    my $_next     = ($_wid - 1) * $_chunk_size * $_step + $_begin;
    my $_chunk_id = $_wid;
 
+   $_fmt =~ s/%// if (defined $_fmt);
+
    ## -------------------------------------------------------------------------
 
    $self->{_last_jmp} = sub { goto _WORKER_SEQ_GEN__LAST; };
@@ -98,16 +111,30 @@ sub _worker_sequence_generator {
          my @_n = ();
 
          if ($_begin < $_end) {
-            for (1 .. $_chunk_size) {
-               last if ($_next > $_end);
-               push @_n, (defined $_fmt) ? sprintf("%$_fmt", $_next) : $_next;
-               $_next = $_step * $_ + $_n_begin;
+            if (!defined $_fmt && $_step == 1 &&
+                  $_next + $_chunk_size <= $_end)
+            {
+               @_n = ($_next .. $_next + $_chunk_size - 1);
+               $_next += $_chunk_size;
+            }
+            else {
+               for (1 .. $_chunk_size) {
+                  last if ($_next > $_end);
+
+                  push @_n, (defined $_fmt)
+                     ? sprintf("%$_fmt", $_next) : $_next;
+
+                  $_next = $_step * $_ + $_n_begin;
+               }
             }
          }
          else {
             for (1 .. $_chunk_size) {
                last if ($_next < $_end);
-               push @_n, (defined $_fmt) ? sprintf("%$_fmt", $_next) : $_next;
+
+               push @_n, (defined $_fmt)
+                  ? sprintf("%$_fmt", $_next) : $_next;
+
                $_next = $_step * $_ + $_n_begin;
             }
          }
@@ -130,32 +157,4 @@ sub _worker_sequence_generator {
 }
 
 1;
-
-__END__
-
-###############################################################################
-## ----------------------------------------------------------------------------
-## Module usage.
-##
-###############################################################################
-
-=head1 NAME
-
-MCE::Core::Input::Generator - Sequence of numbers generator for MCE.
-
-=head1 SYNOPSIS
-
-There is no public API.
-
-=head1 DESCRIPTION
-
-This package provides a sequence of numbers used internally by the worker
-process. Distribution is divided equally among workers. This allows sequence
-to be configured independently among multiple user tasks.
-
-=head1 SEE ALSO
-
-L<MCE>
-
-=cut
 

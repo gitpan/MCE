@@ -1,7 +1,17 @@
+###############################################################################
+## ----------------------------------------------------------------------------
+## MCE::Core::Worker - Core methods for the worker process.
+##
+## This package provides main, loop, and relevant methods used internally by
+## the worker process.
+##
+## There is no public API.
+##
+###############################################################################
 
 package MCE::Core::Worker;
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -337,14 +347,8 @@ sub _worker_do {
       }
    }
 
-   ## Assign user function. Determine if gather is allowed.
+   ## Assign user function.
    $self->{_wuf} = \&_do_user_func;
-
-   if (defined $self->{gather} || $_params_ref->{_wants_gather}) {
-      $self->{_gather_allowed} = 1;
-   } else {
-      $self->{_gather_allowed} = 0;
-   }
 
    ## Set time_block & start_time values for interval.
    if (defined $self->{interval}) {
@@ -652,31 +656,4 @@ sub _worker_main {
 }
 
 1;
-
-__END__
-
-###############################################################################
-## ----------------------------------------------------------------------------
-## Module usage.
-##
-###############################################################################
-
-=head1 NAME
-
-MCE::Core::Worker - Worker's main, loop, and do methods for MCE.
-
-=head1 SYNOPSIS
-
-There is no public API.
-
-=head1 DESCRIPTION
-
-This package provides the main, loop, and do methods used internally by the
-worker process.
-
-=head1 SEE ALSO
-
-L<MCE>
-
-=cut
 

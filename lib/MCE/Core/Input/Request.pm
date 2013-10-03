@@ -1,7 +1,17 @@
+###############################################################################
+## ----------------------------------------------------------------------------
+## MCE::Core::Input::Request - Array_ref and Glob_ref input reader.
+##
+## This package provides the request chunk method used internally by the worker
+## process. Distribution follows a bank-queuing model.
+##
+## There is no public API.
+##
+###############################################################################
 
 package MCE::Core::Input::Request;
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -128,25 +138,4 @@ sub _worker_request_chunk {
 }
 
 1;
-
-__END__
-
-=head1 NAME
-
-MCE::Core::Input::Request - Array_Ref/Glob_Ref input reader for MCE.
-
-=head1 SYNOPSIS
-
-There is no public API.
-
-=head1 DESCRIPTION
-
-This package provides the request chunk method used internally by the worker
-process. Distribution follows a bank-queuing model.
-
-=head1 SEE ALSO
-
-L<MCE>
-
-=cut
 

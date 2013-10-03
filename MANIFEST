@@ -5,9 +5,8 @@ LICENSE
 MANIFEST
 MANIFEST.SKIP
 README
-TODO
 lib/MCE.pm
-lib/MCE.pod
+lib/MCE/Core.pm
 lib/MCE/Core/Input/Generator.pm
 lib/MCE/Core/Input/Handle.pm
 lib/MCE/Core/Input/Request.pm
@@ -15,6 +14,7 @@ lib/MCE/Core/Input/Sequence.pm
 lib/MCE/Core/Manager.pm
 lib/MCE/Core/Validation.pm
 lib/MCE/Core/Worker.pm
+lib/MCE/Examples.pod
 lib/MCE/Flow.pm
 lib/MCE/Grep.pm
 lib/MCE/Loop.pm
@@ -44,7 +44,6 @@ examples/matmult/strassen_07_t.pl
 examples/matmult/strassen_49_f.pl
 examples/matmult/strassen_49_t.pl
 examples/matmult/strassen_perl.pl
-examples/mce_usage.readme
 examples/scaling_pings.pl
 examples/seq_demo.pl
 examples/tbray/README
@@ -65,7 +64,6 @@ images/07_Sequential_IO.gif
 images/08_Natural_Callback.gif
 images/09_Supported_OS.gif
 images/10_Scaling_Pings.gif
-images/11_SNMP_Collection.gif
 t/00_required_modules.t
 t/00_required_signals.t
 t/01_load_mce.t
@@ -75,6 +73,4 @@ t/01_load_signal_tag.t
 t/02_do_callback_args.t
 t/02_do_callback_result.t
 t/03_chunk_size.t
-t/pod-coverage.t
-t/pod.t
 META.yml

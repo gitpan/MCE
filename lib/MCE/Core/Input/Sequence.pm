@@ -1,7 +1,17 @@
+###############################################################################
+## ----------------------------------------------------------------------------
+## MCE::Core::Input::Sequence - Sequence of numbers (for task_id == 0).
+##
+## This package provides a sequence of numbers used internally by the worker
+## process. Distribution follows a bank-queuing model.
+##
+## There is no public API.
+##
+###############################################################################
 
 package MCE::Core::Input::Sequence;
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -56,6 +66,8 @@ sub _worker_sequence_queue {
    $_abort    = $self->{_abort_msg};
    $_chunk_id = $_offset = 0;
 
+   $_fmt =~ s/%// if (defined $_fmt);
+
    ## -------------------------------------------------------------------------
 
    $self->{_next_jmp} = sub { goto _WORKER_SEQUENCE__NEXT; };
@@ -91,16 +103,30 @@ sub _worker_sequence_queue {
          $_seq_n = $_n_begin;
 
          if ($_begin < $_end) {
-            for (1 .. $_chunk_size) {
-               last if ($_seq_n > $_end);
-               push @_n, (defined $_fmt) ? sprintf("%$_fmt", $_seq_n) : $_seq_n;
-               $_seq_n = $_step * $_ + $_n_begin;
+            if (!defined $_fmt && $_step == 1 &&
+                  $_seq_n + $_chunk_size <= $_end)
+            {
+               @_n = ($_seq_n .. $_seq_n + $_chunk_size - 1);
+               $_seq_n += $_chunk_size;
+            }
+            else {
+               for (1 .. $_chunk_size) {
+                  last if ($_seq_n > $_end);
+
+                  push @_n, (defined $_fmt)
+                     ? sprintf("%$_fmt", $_seq_n) : $_seq_n;
+
+                  $_seq_n = $_step * $_ + $_n_begin;
+               }
             }
          }
          else {
             for (1 .. $_chunk_size) {
                last if ($_seq_n < $_end);
-               push @_n, (defined $_fmt) ? sprintf("%$_fmt", $_seq_n) : $_seq_n;
+
+               push @_n, (defined $_fmt)
+                  ? sprintf("%$_fmt", $_seq_n) : $_seq_n;
+
                $_seq_n = $_step * $_ + $_n_begin;
             }
          }
@@ -118,25 +144,4 @@ sub _worker_sequence_queue {
 }
 
 1;
-
-__END__
-
-=head1 NAME
-
-MCE::Core::Input::Sequence - Sequence of numbers (task0) for MCE.
-
-=head1 SYNOPSIS
-
-There is no public API.
-
-=head1 DESCRIPTION
-
-This package provides a sequence of numbers used internally by the worker
-process. Distribution follows a bank-queuing model.
-
-=head1 SEE ALSO
-
-L<MCE>
-
-=cut
 

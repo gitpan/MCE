@@ -1,7 +1,6 @@
 ###############################################################################
 ## ----------------------------------------------------------------------------
-## MCE::Signal
-## -- Provides tmp_dir creation & signal handling for Many-Core Engine.
+## MCE::Signal - Temporary directory creation/cleanup & signal handling.
 ##
 ###############################################################################
 
@@ -13,7 +12,7 @@ use warnings;
 use Fcntl qw( :flock O_RDONLY );
 use base qw( Exporter );
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 our ($has_threads, $main_proc_id, $prog_name);
 our ($display_die_with_localtime, $display_warn_with_localtime);
@@ -437,11 +436,11 @@ __END__
 
 =head1 NAME
 
-MCE::Signal - Provides tmp_dir creation & signal handling for Many-Core Engine.
+MCE::Signal - Temporary directory creation/cleanup & signal handling
 
 =head1 VERSION
 
-This document describes MCE::Signal version 1.499_001
+This document describes MCE::Signal version 1.499_002
 
 =head1 SYNOPSIS
 
@@ -526,21 +525,15 @@ Nothing is exported by default. Exportable are 1 variable and 2 subroutines.
  use MCE::Signal qw( -keep_tmp_dir );
  use MCE::Signal qw( -use_dev_shm -keep_tmp_dir );
 
-=head1 REQUIREMENTS
+=head1 INDEX
 
-Perl 5.8.0 or later
-
-=head1 SOURCE
-
-The source is hosted at: L<http://code.google.com/p/many-core-engine-perl/>
+L<MCE>
 
 =head1 AUTHOR
 
 Mario E. Roy, S<E<lt>marioeroy AT gmail DOT comE<gt>>
 
-=head1 COPYRIGHT AND LICENSE
-
-Copyright (C) 2012-2013 by Mario E. Roy
+=head1 LICENSE
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of either: the GNU General Public License as published

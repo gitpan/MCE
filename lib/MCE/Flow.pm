@@ -1,7 +1,6 @@
 ###############################################################################
 ## ----------------------------------------------------------------------------
-## MCE::Flow
-## -- Build creative apps using Many-Core Engine and User-Tasks.
+## MCE::Flow - Parallel flow model for building creative applications.
 ##
 ###############################################################################
 
@@ -12,10 +11,10 @@ use warnings;
 
 use Scalar::Util qw( looks_like_number );
 
-use MCE 1.499;
+use MCE::Core;
 use MCE::Util;
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -43,7 +42,7 @@ sub import {
       $MCE::THAW    = shift and next if ( $_arg =~ /^thaw$/i );
 
       if ( $_arg =~ /^sereal$/i ) {
-         if (shift) {
+         if (shift eq '1') {
             local $@; eval 'use Sereal qw(encode_sereal decode_sereal)';
             unless ($@) {
                $MCE::FREEZE = \&encode_sereal;
@@ -66,7 +65,9 @@ sub import {
    no strict 'refs'; no warnings 'redefine';
    my $_package = caller();
 
-   *{ $_package . '::mce_flow' } = \&mce_flow;
+   *{ $_package . '::mce_flow_f' } = \&mce_flow_f;
+   *{ $_package . '::mce_flow_s' } = \&mce_flow_s;
+   *{ $_package . '::mce_flow'   } = \&mce_flow;
 
    return;
 }
@@ -92,8 +93,7 @@ sub init (@) {
    _croak("$_tag: 'argument' is not a HASH reference")
       unless (ref $_[0] eq 'HASH');
 
-   MCE::Flow::finish();
-   $_params = shift;
+   MCE::Flow::finish(); $_params = shift;
 
    return;
 }
@@ -107,6 +107,114 @@ sub finish () {
    @_user_tasks = (); @_prev_w = (); @_prev_n = (); @_prev_c = ();
 
    return;
+}
+
+###############################################################################
+## ----------------------------------------------------------------------------
+## Parallel flow with MCE -- file.
+##
+###############################################################################
+
+sub mce_flow_f (@) {
+
+   my ($_file, $_pos); my $_start_pos = (ref $_[0] eq 'HASH') ? 2 : 1;
+
+   for ($_start_pos .. @_ - 1) {
+      my $_ref = ref $_[$_];
+      if ($_ref eq "" || $_ref eq 'GLOB' || $_ref eq 'SCALAR') {
+         $_file = $_[$_]; $_pos = $_;
+         last;
+      }
+   }
+
+   if (defined $_params) {
+      delete $_params->{input_data} if (exists $_params->{input_data});
+      delete $_params->{sequence}   if (exists $_params->{sequence});
+   }
+   else {
+      $_params = {};
+   }
+
+   if (defined $_file && ref $_file eq "" && $_file ne "") {
+      _croak("$_tag: '$_file' does not exist") unless (-e $_file);
+      _croak("$_tag: '$_file' is not readable") unless (-r $_file);
+      _croak("$_tag: '$_file' is not a plain file") unless (-f $_file);
+      $_params->{_file} = $_file;
+   }
+   elsif (ref $_file eq 'GLOB' || ref $_file eq 'SCALAR') {
+      $_params->{_file} = $_file;
+   }
+   else {
+      _croak("$_tag: 'file' is not specified or valid");
+   }
+
+   if (defined $_pos) {
+      pop @_ for ($_pos .. @_ - 1);
+   }
+
+   return mce_flow(@_);
+}
+
+###############################################################################
+## ----------------------------------------------------------------------------
+## Parallel flow with MCE -- sequence.
+##
+###############################################################################
+
+sub mce_flow_s (@) {
+
+   my ($_begin, $_end, $_pos); my $_start_pos = (ref $_[0] eq 'HASH') ? 2 : 1;
+
+   delete $_params->{sequence}
+      if (exists $_params->{sequence});
+
+   for ($_start_pos .. @_ - 1) {
+      my $_ref = ref $_[$_];
+
+      if ($_ref eq "" || $_ref eq 'HASH' || $_ref eq 'ARRAY') {
+         $_pos = $_;
+
+         if ($_ref eq "") {
+            $_begin = $_[$_pos]; $_end = $_[$_pos + 1];
+            $_params->{sequence} = [
+               $_[$_pos], $_[$_pos + 1], $_[$_pos + 2], $_[$_pos + 3]
+            ];
+         }
+         elsif ($_ref eq 'HASH') {
+            $_begin = $_[$_pos]->{begin}; $_end = $_[$_pos]->{end};
+            $_params->{sequence} = $_[0];
+         }
+         elsif ($_ref eq 'ARRAY') {
+            $_begin = $_[$_pos]->[0]; $_end = $_[$_pos]->[1];
+            $_params->{sequence} = $_[0];
+         }
+
+         last;
+      }
+   }
+
+   if (defined $_params) {
+      delete $_params->{input_data} if (exists $_params->{input_data});
+      delete $_params->{_file}      if (exists $_params->{_file});
+   }
+   else {
+      $_params = {};
+   }
+
+   _croak("$_tag: 'sequence' is not specified or valid")
+      unless (exists $_params->{sequence});
+
+   _croak("$_tag: 'begin' is not specified for sequence")
+      unless (defined $_begin);
+
+   _croak("$_tag: 'end' is not specified for sequence")
+      unless (defined $_end);
+
+   if (defined $_pos) {
+      pop @_ for ($_pos .. @_ - 1);
+   }
+
+   return mce_flow(@_);
 }
 
 ###############################################################################
@@ -170,38 +278,34 @@ sub mce_flow (@) {
 
    ## -------------------------------------------------------------------------
 
-   my ($_chunk_size, $_max_workers) = ($CHUNK_SIZE, $MAX_WORKERS);
-   my $_r = ref $_[0];
+   my $_input_data; my $_max_workers = $MAX_WORKERS; my $_r = ref $_[0];
 
-   my $_input_data = shift
-      if ($_r eq 'ARRAY' || $_r eq 'GLOB' || $_r eq 'SCALAR');
+   if ($_r eq 'ARRAY' || $_r eq 'GLOB' || $_r eq 'SCALAR') {
+      $_input_data = shift;
+   }
 
-   if (defined $_params) {
-      my $_p = $_params;
-
-      $_chunk_size = $_p->{chunk_size} if (exists $_p->{chunk_size});
-      delete $_p->{user_func} if (exists $_p->{user_func});
-
+   if (defined $_params) { my $_p = $_params;
       $_max_workers = MCE::Util::_parse_max_workers($_p->{max_workers})
          if (exists $_p->{max_workers} && ref $_p->{max_workers} ne 'ARRAY');
 
-      $_input_data = $_p->{input_data}
-         if (!defined $_input_data && exists $_p->{input_data});
+      delete $_p->{user_func}  if (exists $_p->{user_func});
+      delete $_p->{user_tasks} if (exists $_p->{user_tasks});
    }
-
    $_max_workers = int($_max_workers / @_code + 0.5) + 1
       if (@_code > 1);
 
-   if ($_chunk_size eq 'auto') {
-      my $_size = (defined $_input_data && ref $_input_data eq 'ARRAY')
-         ? scalar @{ $_input_data } : scalar @_;
+   my $_chunk_size = MCE::Util::_parse_chunk_size(
+      $CHUNK_SIZE, $_max_workers, $_params, $_input_data, scalar @_
+   );
 
-      $_chunk_size = int($_size / $_max_workers / @_code + 0.5);
-      $_chunk_size = 8000 if $_chunk_size > 8000;
-      $_chunk_size = 1 if $_chunk_size < 1;
+   if (!defined $_params || !exists $_params->{_file}) {
+      $_chunk_size = int($_chunk_size / @_code + 0.5) + 1
+         if (@_code > 1);
+   }
 
-      $_chunk_size = 800
-         if (defined $_params && exists $_params->{sequence});
+   if (defined $_params) {
+      $_input_data = $_params->{input_data} if (exists $_params->{input_data});
+      $_input_data = $_params->{_file} if (exists $_params->{_file});
    }
 
    ## -------------------------------------------------------------------------
@@ -222,10 +326,13 @@ sub mce_flow (@) {
             next if ($_ eq 'max_workers' && ref $_p->{max_workers} eq 'ARRAY');
             next if ($_ eq 'task_name' && ref $_p->{task_name} eq 'ARRAY');
             next if ($_ eq 'input_data');
+
             $_MCE->{$_} = $_p->{$_};
          }
       }
    }
+
+   my @_a; my $_wa = wantarray; $_MCE->{gather} = \@_a if (defined $_wa);
 
    if (defined $_input_data) {
       @_ = (); $_MCE->process({ chunk_size => $_chunk_size }, $_input_data);
@@ -237,9 +344,16 @@ sub mce_flow (@) {
       $_MCE->run({ chunk_size => $_chunk_size }, 0);
    }
 
+   if (defined $_params) {
+      delete $_params->{input_data}; delete $_params->{_file};
+      delete $_params->{sequence};
+   }
+
+   delete $_MCE->{gather} if (defined $_wa);
+
    MCE::_restore_state;
 
-   return;
+   return ((defined $_wa) ? @_a : ());
 }
 
 ###############################################################################
@@ -284,13 +398,19 @@ sub _validate_number {
 
 __END__
 
+###############################################################################
+## ----------------------------------------------------------------------------
+## Module usage.
+##
+###############################################################################
+
 =head1 NAME
 
-MCE::Flow - Build creative apps using Many-Core Engine and User-Tasks.
+MCE::Flow - Parallel flow model for building creative applications
 
 =head1 VERSION
 
-This document describes MCE::Flow version 1.499_001
+This document describes MCE::Flow version 1.499_002
 
 =head1 DESCRIPTION
 
@@ -452,6 +572,14 @@ not available. Both chunk_size and max_workers default to auto.
    },
    sub { ... }, sub { ... }, sub { ... }, 1..10000;
 
+=item mce_flow_f
+
+TODO ...
+
+=item mce_flow_s
+
+TODO ...
+
 =item init
 
    MCE::Flow::init {
@@ -473,10 +601,9 @@ not available. Both chunk_size and max_workers default to auto.
 
 =back
 
-=head1 SEE ALSO
+=head1 INDEX
 
-L<MCE::Grep>, L<MCE::Loop>, L<MCE::Map>, L<MCE::Stream>,
-L<MCE::Queue>, L<MCE>
+L<MCE>
 
 =head1 AUTHOR
 

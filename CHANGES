@@ -1,39 +1,40 @@
 
 Revision history for MCE
 
-1.499_001 Sun Sep 22 23:30:00 EST 2013
+1.499_002 Sun Sep 29 21:30:00 EST 2013
 
-    * MCE 1.5 is underway. I have one method to add to MCE::Queue.
-      In the meantime, the following have been completed code-wise.
+    * 3 items remain before releasing the final MCE 1.5 distribution.
+      Document MCE::Stream, finish MCE::Loop and re-visit MCE::Flow.
 
-      Will work on documentation in the next 2 weeks and add additional
-      examples to highlight the various forms of parallel computing with MCE.
+      Am interested in seeing the test results due to the next item
+      mentioned below (actually the main reason for a _002 release).
 
-      Regards,
-      ;) Mario
+      This has turned out to be a very long and tiresome journey for me.
+      Am very glad that this is almost over. MCE 1.5 is very fast.
+      Also like how the models are turning out; MCE::Map, MCE::Grep,
+      MCE::Loop -- will finish that next, plus MCE:Stream and MCE::Flow
+      will become the last two to document, re-visit, finish up.
 
-    * MCE.pm (8 data channels for up to 3x IPC handling)
+      Code-wise, that is 100% completed plus tested.
 
-      e.g. 8 workers calling sendto in MCE 1.4 sends 80,000 per second.
-      That is now over 250,000 per second in MCE 1.5. That is just the
-      beginning. The following is not a good benchmark due to printf
-      formatting being done inside the preserve order code block run by
-      the manager. Foreach is able to do 40,000 and forseq 78,000 when
-      commenting out the printf statement. In any event, IPC is much
-      faster in MCE 1.5.
+      ;) mario
 
-                             (Before)      (After)
-         Parallel::Loops          600          600
-         $mce->foreach         21,500       34,000  (+ 12,500)
-         $mce->forseq          64,000       70,000  (+  6,000)
-         $mce->forchunk       450,000      465,000  (+ 15,000)
+    * The top level MCE.pm file is now mainly an index page (POD wise). The
+      code previously located in MCE.pm (1.4) moved to MCE::Core, some of
+      which went to various files under the Core directory. The documentation,
+      previously MCE.pod, is now placed at the end of MCE::Core with the
+      examples section becoming MCE::Examples going forward.
 
-    * MCE::Flow, MCE::Grep, MCE::Loop, MCE::Map, MCE::Queue, MCE::Stream
+      MCE 1.5 is backwards compatible with 1.4 and below.
 
-      How did I forget... The gather option... Take a look at the
-      MCE::Flow pod page when you have a chance.
+    * IPC has been enhanced with 8 data channels. Many operations run 3x when
+      compared with MCE 1.4.
 
-    * MCE 1.5 is backwards compatible with 1.4.x and lower.
+    * Five models: MCE::Flow, MCE::Grep, MCE::Loop, MCE::Map, and MCE::Stream.
+
+    * Hybrid queues via MCE::Queue allowing for normal and priority queues.
+
+    * MCE::Subs for exporting functions prefixed with mce_; e.g. mce_wid.
 
     * All public methods can be called directly using the package name
       and method e.g. MCE->wid, MCE->run.
@@ -42,24 +43,20 @@ Revision history for MCE
             max_workers => 'auto',
             user_func => sub {
                my $wid = MCE->wid;
-               MCE->sendto('STDOUT', "Hello from $wid\n");
+               MCE->sendto("STDOUT", "Hello from $wid\n");
             }
          );
 
          MCE->run;
 
-    * New example (interval.pl). More to come for the final 1.5 release.
-
     * New options (gather, interval, task_name).
-
-      Changes to other options are described below.
 
       The task_end option can now be specified at the top level.
       See docs for use case.
 
-      Input_data can be specified inside the first task instead of
-      having to specify this at the top level. Note that input_data
-      is ignored if specified for tasks having task_id > 0.
+      Input_data can be specified inside the first task instead of having
+      to specify this at the top level. Input_data is ignored when specified
+      for tasks other than the first task.
 
          user_tasks => [{
             input_data => \@list,
@@ -71,18 +68,19 @@ Revision history for MCE
     * New public methods
       chunk_id, gather, freeze, thaw, yield, task_name, print, printf, say
 
+    * New example (interval.pl).
+
     * Optimized the egrep.pl and wc.pl examples. These run much faster.
       Try these out against large log files. Both examples fly.
 
     * Barrier synchronization update. Two sockets are utilized instead of
-      two lock files. This, at last, now works wonderfully under the Cygwin
-      environment. For threading, the removal of the 2 lock files allows
-      one to have a greater number of threads within the limits of ulimit.
-      Previously, only about 1/3rd of ulimit -n was possible. One can now
-      spawn just under 1/2 of ulimit -- int(ulimit -n / 2 - 10).
+      2 lock files. This, now works wonderfully under the Cygwin environment.
+      For threading, the removal of 2 lock files increases the number of
+      threads allowed from about 1/3rd previously to under 1/2 of ulimit,
+      e.g. int(ulimit -n / 2 - 20).
 
     * Removed the logic for determining MAX_OPEN_FILES and MAX_USER_PROCS.
-      MCE no longer limits on max_workers allowed.
+      MCE no longer has a constraint on max_workers allowed.
 
     * Code re-factor work. Added a private method _validate_runstate called
       by various methods. Organized the code slightly such as placement of

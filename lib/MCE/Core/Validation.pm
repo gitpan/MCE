@@ -1,7 +1,17 @@
+###############################################################################
+## ----------------------------------------------------------------------------
+## MCE::Core::Validation - Core validation methods for Many-core Engine.
+##
+## This package provides validation methods used internally by the manager
+## process.
+##
+## There is no public API.
+##
+###############################################################################
 
 package MCE::Core::Validation;
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -209,31 +219,4 @@ sub _validate_runstate {
 }
 
 1;
-
-__END__
-
-###############################################################################
-## ----------------------------------------------------------------------------
-## Module usage.
-##
-###############################################################################
-
-=head1 NAME
-
-MCE::Core::Validation - Validation methods for MCE.
-
-=head1 SYNOPSIS
-
-There is no public API.
-
-=head1 DESCRIPTION
-
-This package provides the validation methods used internally by the manager
-process.
-
-=head1 SEE ALSO
-
-L<MCE>
-
-=cut
 

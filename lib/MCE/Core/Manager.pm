@@ -1,7 +1,17 @@
+###############################################################################
+## ----------------------------------------------------------------------------
+## MCE::Core::Manager - Core methods for the manager process.
+##
+## This package provides the loop and relevant methods used internally by the
+## manager process.
+##
+## There is no public API.
+##
+###############################################################################
 
 package MCE::Core::Manager;
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -693,30 +703,4 @@ sub _output_loop {
 }
 
 1;
-
-__END__
-
-###############################################################################
-## ----------------------------------------------------------------------------
-## Module usage.
-##
-###############################################################################
-
-=head1 NAME
-
-MCE::Core::Manager - Loop method for the manager process.
-
-=head1 SYNOPSIS
-
-There is no public API.
-
-=head1 DESCRIPTION
-
-This package provides the loop method used internally by the manager process.
-
-=head1 SEE ALSO
-
-L<MCE>
-
-=cut
 

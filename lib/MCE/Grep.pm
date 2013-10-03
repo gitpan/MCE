@@ -1,7 +1,6 @@
 ###############################################################################
 ## ----------------------------------------------------------------------------
-## MCE::Grep
-## -- Provides a parallel grep implementation using Many-Core Engine.
+## MCE::Grep - Parallel grep model similar to the native grep function.
 ##
 ###############################################################################
 
@@ -12,10 +11,10 @@ use warnings;
 
 use Scalar::Util qw( looks_like_number );
 
-use MCE 1.499;
+use MCE::Core;
 use MCE::Util;
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -26,8 +25,7 @@ our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
 our $MAX_WORKERS = 'auto';
 our $CHUNK_SIZE  = 'auto';
 
-my ($_MCE, $_MCE_P, $_loaded); my ($_params, $_prev_c);
-my $_p_funcs = {}; my $_tag = 'MCE::Grep';
+my ($_MCE, $_loaded); my ($_params, $_prev_c); my $_tag = 'MCE::Grep';
 
 sub import {
 
@@ -43,7 +41,7 @@ sub import {
       $MCE::THAW    = shift and next if ( $_arg =~ /^thaw$/i );
 
       if ( $_arg =~ /^sereal$/i ) {
-         if (shift) {
+         if (shift eq '1') {
             local $@; eval 'use Sereal qw(encode_sereal decode_sereal)';
             unless ($@) {
                $MCE::FREEZE = \&encode_sereal;
@@ -66,8 +64,9 @@ sub import {
    no strict 'refs'; no warnings 'redefine';
    my $_package = caller();
 
-   *{ $_package . '::mce_grepp' } = \&mce_grepp;
-   *{ $_package . '::mce_grep'  } = \&mce_grep;
+   *{ $_package . '::mce_grep_f' } = \&mce_grep_f;
+   *{ $_package . '::mce_grep_s' } = \&mce_grep_s;
+   *{ $_package . '::mce_grep'   } = \&mce_grep;
 
    return;
 }
@@ -98,30 +97,6 @@ sub _gather {
 ##
 ###############################################################################
 
-sub initp (@) {
-
-   if (MCE->wid) {
-      @_ = (); _croak(
-         "$_tag: function cannot be called by the worker process"
-      );
-   }
-
-   _croak("$_tag: 'argument' is not a HASH reference")
-      unless (ref $_[0] eq 'HASH');
-
-   my $_hash_ref = shift;
-
-   MCE::_save_state;
-
-   $_MCE_P->shutdown() if (defined $_MCE_P);
-   $_p_funcs = $_hash_ref;
-   $_MCE_P->spawn();
-
-   MCE::_restore_state;
-
-   return;
-}
-
 sub init (@) {
 
    if (MCE->wid) {
@@ -133,17 +108,13 @@ sub init (@) {
    _croak("$_tag: 'argument' is not a HASH reference")
       unless (ref $_[0] eq 'HASH');
 
-   MCE::Grep::finish();
-   $_params = shift;
+   MCE::Grep::finish(); $_params = shift;
 
    return;
 }
 
 sub finish () {
 
-   if (defined $_MCE_P) {
-      MCE::_save_state; $_MCE_P->shutdown(); MCE::_restore_state;
-   }
    if (defined $_MCE) {
       MCE::_save_state; $_MCE->shutdown(); MCE::_restore_state;
    }
@@ -155,11 +126,96 @@ sub finish () {
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
+## Parallel grep with MCE -- file.
+##
+###############################################################################
+
+sub mce_grep_f (&@) {
+
+   my $_code = shift; my $_file = shift;
+
+   if (defined $_params) {
+      delete $_params->{input_data} if (exists $_params->{input_data});
+      delete $_params->{sequence}   if (exists $_params->{sequence});
+   }
+   else {
+      $_params = {};
+   }
+
+   if (defined $_file && ref $_file eq "" && $_file ne "") {
+      _croak("$_tag: '$_file' does not exist") unless (-e $_file);
+      _croak("$_tag: '$_file' is not readable") unless (-r $_file);
+      _croak("$_tag: '$_file' is not a plain file") unless (-f $_file);
+      $_params->{_file} = $_file;
+   }
+   elsif (ref $_file eq 'GLOB' || ref $_file eq 'SCALAR') {
+      $_params->{_file} = $_file;
+   }
+   else {
+      _croak("$_tag: 'file' is not specified or valid");
+   }
+
+   @_ = ();
+
+   return mce_grep($_code);
+}
+
+###############################################################################
+## ----------------------------------------------------------------------------
+## Parallel grep with MCE -- sequence.
+##
+###############################################################################
+
+sub mce_grep_s (&@) {
+
+   my $_code = shift;
+
+   if (defined $_params) {
+      delete $_params->{input_data} if (exists $_params->{input_data});
+      delete $_params->{_file}      if (exists $_params->{_file});
+   }
+   else {
+      $_params = {};
+   }
+
+   my ($_begin, $_end);
+
+   if (ref $_[0] eq 'HASH') {
+      $_begin = $_[0]->{begin}; $_end = $_[0]->{end};
+      $_params->{sequence} = $_[0];
+   }
+   elsif (ref $_[0] eq 'ARRAY') {
+      $_begin = $_[0]->[0]; $_end = $_[0]->[1];
+      $_params->{sequence} = $_[0];
+   }
+   elsif (ref $_[0] eq "") {
+      $_begin = $_[0]; $_end = $_[1];
+      $_params->{sequence} = [ @_ ];
+   }
+   else {
+      _croak("$_tag: 'sequence' is not specified or valid");
+   }
+
+   _croak("$_tag: 'begin' is not specified for sequence")
+      unless (defined $_begin);
+
+   _croak("$_tag: 'end' is not specified for sequence")
+      unless (defined $_end);
+
+   @_ = ();
+
+   return mce_grep($_code);
+}
+
+###############################################################################
+## ----------------------------------------------------------------------------
 ## Parallel grep with MCE.
 ##
 ###############################################################################
 
 sub mce_grep (&@) {
+
+   my $_code = shift;   $_total_chunks = 0; undef %_tmp;
 
    if (MCE->wid) {
       @_ = (); _croak(
@@ -167,49 +223,28 @@ sub mce_grep (&@) {
       );
    }
 
-   my $_code = shift;
+   my $_input_data; my $_max_workers = $MAX_WORKERS; my $_r = ref $_[0];
 
-   if (ref $_[0] eq 'HASH') {
-      $_params = {} unless defined $_params;
-      $_params->{$_} = $_[0]->{$_} foreach (keys %{ $_[0] });
-
-      shift;
+   if ($_r eq 'ARRAY' || $_r eq 'GLOB' || $_r eq 'SCALAR') {
+      $_input_data = shift;
    }
 
-   $_total_chunks = 0; undef %_tmp;
+   if (defined $_params) { my $_p = $_params;
+      $_max_workers = MCE::Util::_parse_max_workers($_p->{max_workers})
+         if (exists $_p->{max_workers});
 
-   ## -------------------------------------------------------------------------
+      delete $_p->{user_func}  if (exists $_p->{user_func});
+      delete $_p->{user_tasks} if (exists $_p->{user_tasks});
+      delete $_p->{gather}     if (exists $_p->{gather});
+   }
 
-   my ($_chunk_size, $_max_workers) = ($CHUNK_SIZE, $MAX_WORKERS);
-   my $_r = ref $_[0];
-
-   my $_input_data = shift
-      if ($_r eq 'ARRAY' || $_r eq 'GLOB' || $_r eq 'SCALAR');
+   my $_chunk_size = MCE::Util::_parse_chunk_size(
+      $CHUNK_SIZE, $_max_workers, $_params, $_input_data, scalar @_
+   );
 
    if (defined $_params) {
-      my $_p = $_params;
-
-      $_chunk_size = $_p->{chunk_size} if (exists $_p->{chunk_size});
-      delete $_p->{user_func} if (exists $_p->{user_func});
-      delete $_p->{gather} if (exists $_p->{gather});
-
-      $_max_workers = MCE::Util::_parse_max_workers($_p->{max_workers})
-         if (exists $_p->{max_workers} && ref $_p->{max_workers} ne 'ARRAY');
-
-      $_input_data = $_p->{input_data}
-         if (!defined $_input_data && exists $_p->{input_data});
-   }
-
-   if ($_chunk_size eq 'auto') {
-      my $_size = (defined $_input_data && ref $_input_data eq 'ARRAY')
-         ? scalar @{ $_input_data } : scalar @_;
-
-      $_chunk_size = int($_size / $_max_workers + 0.5);
-      $_chunk_size = 8000 if $_chunk_size > 8000;
-      $_chunk_size = 1 if $_chunk_size < 1;
-
-      $_chunk_size = 800
-         if (defined $_params && exists $_params->{sequence});
+      $_input_data = $_params->{input_data} if (exists $_params->{input_data});
+      $_input_data = $_params->{_file} if (exists $_params->{_file});
    }
 
    ## -------------------------------------------------------------------------
@@ -234,7 +269,10 @@ sub mce_grep (&@) {
       );
 
       if (defined $_params) {
-         $_MCE->{$_} = $_params->{$_} foreach (keys %{ $_params });
+         my $_p = $_params; foreach (keys %{ $_p }) {
+            next if ($_ eq 'input_data');
+            $_MCE->{$_} = $_p->{$_};
+         }
       }
    }
 
@@ -249,109 +287,9 @@ sub mce_grep (&@) {
          if (defined $_params && exists $_params->{sequence});
    }
 
-   MCE::_restore_state;
-
-   return map { @{ $_ } } delete @_tmp{ 1 .. $_total_chunks };
-}
-
-###############################################################################
-## ----------------------------------------------------------------------------
-## Parallel grep with MCE -- workers persist after running.
-##
-###############################################################################
-
-sub mce_grepp (@) {
-
-   if (MCE->wid) {
-      @_ = (); _croak(
-         "$_tag: function cannot be called by the worker process"
-      );
-   }
-
-   my $_func = shift;
-
-   if (!defined $_func || !exists $_p_funcs->{$_func}) {
-      @_ = (); _croak("$_tag: '$_func' function does not exist in hash");
-   }
-
-   if (ref $_[0] eq 'HASH') {
-      $_params = {} unless defined $_params;
-      $_params->{$_} = $_[0]->{$_} foreach (keys %{ $_[0] });
-
-      shift;
-   }
-
-   $_total_chunks = 0; undef %_tmp;
-
-   ## -------------------------------------------------------------------------
-
-   my ($_chunk_size, $_max_workers) = ($CHUNK_SIZE, $MAX_WORKERS);
-   my $_r = ref $_[0];
-
-   my $_input_data = shift
-      if ($_r eq 'ARRAY' || $_r eq 'GLOB' || $_r eq 'SCALAR');
-
    if (defined $_params) {
-      my $_p = $_params;
-
-      $_chunk_size = $_p->{chunk_size} if (exists $_p->{chunk_size});
-      delete $_p->{user_func} if (exists $_p->{user_func});
-      delete $_p->{gather} if (exists $_p->{gather});
-
-      $_max_workers = MCE::Util::_parse_max_workers($_p->{max_workers})
-         if (exists $_p->{max_workers} && ref $_p->{max_workers} ne 'ARRAY');
-
-      $_input_data = $_p->{input_data}
-         if (!defined $_input_data && exists $_p->{input_data});
-   }
-
-   if ($_chunk_size eq 'auto') {
-      my $_size = (defined $_input_data && ref $_input_data eq 'ARRAY')
-         ? scalar @{ $_input_data } : scalar @_;
-
-      $_chunk_size = int($_size / $_max_workers + 0.5);
-      $_chunk_size = 8000 if $_chunk_size > 8000;
-      $_chunk_size = 1 if $_chunk_size < 1;
-
-      $_chunk_size = 800
-         if (defined $_params && exists $_params->{sequence});
-   }
-
-   ## -------------------------------------------------------------------------
-
-   MCE::_save_state;
-
-   if (!defined $_MCE_P) {
-      $_MCE_P = MCE->new(
-         use_threads => 0, max_workers => $_max_workers, task_name => $_tag,
-         gather => \&_gather, user_func => sub {
-
-            my @_a; my ($_mce, $_chunk_ref, $_chunk_id) = @_;
-            my $_code = $_p_funcs->{ $_mce->user_args };
-
-          # foreach (@$_chunk_ref) { push (@_a, $_) if &$_code; }
-            push @_a, grep { &$_code } @{ $_chunk_ref };
-
-            MCE->gather(\@_a, $_chunk_id);
-         }
-      );
-
-      if (defined $_params) {
-         $_MCE_P->{$_} = $_params->{$_} foreach (keys %{ $_params });
-      }
-   }
-
-   my $_options = { chunk_size => $_chunk_size, user_args => $_func };
-
-   if (defined $_input_data) {
-      @_ = (); $_MCE_P->process($_options, $_input_data);
-   }
-   elsif (scalar @_) {
-      $_MCE_P->process($_options, \@_);
-   }
-   else {
-      $_MCE_P->run($_options, 0)
-         if (defined $_params && exists $_params->{sequence});
+      delete $_params->{input_data}; delete $_params->{_file};
+      delete $_params->{sequence};
    }
 
    MCE::_restore_state;
@@ -384,74 +322,212 @@ sub _validate_number {
 
 __END__
 
+###############################################################################
+## ----------------------------------------------------------------------------
+## Module usage.
+##
+###############################################################################
+
 =head1 NAME
 
-MCE::Grep - Provides a parallel grep implementation using Many-Core Engine.
+MCE::Grep - Parallel grep model similar to the native grep function
 
 =head1 VERSION
 
-This document describes MCE::Grep version 1.499_001
+This document describes MCE::Grep version 1.499_002
 
 =head1 SYNOPSIS
 
-   use MCE::Map;
+   ## Exports mce_grep, mce_grep_f, and mce_grep_s
    use MCE::Grep;
 
-   my @s = mce_map { $_ * $_ } mce_grep { $_ % 5 == 0 } 1..10000;
+   ## Array or array_ref
+   my @a = mce_grep { $_ % 5 == 0 } 1..10000;
+   my @b = mce_grep { $_ % 5 == 0 } [ 1..10000 ];
+
+   ## File_path, glob_ref, or scalar_ref
+   my @c = mce_grep_f { /phrase/ } "/path/to/file";
+   my @d = mce_grep_f { /phrase/ } $file_handle;
+   my @e = mce_grep_f { /phrase/ } \$scalar;
+
+   ## Sequence of numbers (begin, end [, step, format])
+   my @f = mce_grep_s { %_ * 3 == 0 } 1, 10000, 5;
+   my @g = mce_grep_s { %_ * 3 == 0 } [ 1, 10000, 5 ];
+
+   my @h = mce_grep_s { %_ * 3 == 0 } {
+      begin => 1, end => 10000, step => 5, format => undef
+   };
 
 =head1 DESCRIPTION
 
-TODO ...
+This module provides a parallel grep implementation via Many-core Engine. MCE
+incurs a small overhead due to passing of data. Therefore, a fast code block
+will likely run faster using the native grep function in Perl. The overhead
+quickly diminishes as the complexity of the code block increases.
 
-=head1 API
+   my @m1 =     grep { $_ % 5 == 0 } 1..1000000;          ## 0.137 secs
+   my @m2 = mce_grep { $_ % 5 == 0 } 1..1000000;          ## 0.295 secs
 
-=over
+Chunking, enabled by default, greatly reduces the overhead behind the scene.
+The time for mce_grep below also includes the time for data exchanges between
+the manager and worker processes. More parallelization will be seen when the
+code block requires more CPU time code-wise.
 
-=item mce_grep
+   my @m1 =     grep { /[2357][1468][9]/ } 1..1000000;    ## 0.653 secs
+   my @m2 = mce_grep { /[2357][1468][9]/ } 1..1000000;    ## 0.347 secs
 
-   ## mce_grep is imported into the calling script.
+The mce_grep_s funtion will provide better times, useful when input data is
+simply a range of numbers. Workers generate sequences mathematically among
+themselves without any interaction by the manager process. Two arguments
+are required for mce_grep_s (begin, end). Step defaults to 1 if begin is
+smaller than end, otherwise -1.
 
-   my @a = mce_flow { ... } 1..100;
+   my @m3 = mce_grep_s { /[2357][1468][9]/ } 1, 1000000;  ## 0.271 secs
+
+Although this documentation is about MCE::Grep, the L<MCE::Stream> module can
+write results immediately without waiting for all chunks to complete. This is
+made possible by passing the reference of the array (in this case @m4 and @m5).
+
+   use MCE::Stream default_mode => 'grep';
+
+   my @m4; mce_stream \@m4, sub { /[2357][1468][9]/ }, 1..1000000;
+
+      ## Completed in 0.304 secs. That is amazing considering the
+      ## overhead for passing data between the manager and worker.
+
+   my @m5; mce_stream_s \@m5, sub { /[2357][1468][9]/ }, 1, 1000000;
+
+      ## Completed in 0.227 secs. Like with mce_grep_s, specifying a
+      ## sequence specification turns out to be faster due to lesser
+      ## overhead for the manager process.
+
+=head1 OVERRIDING DEFAULTS
+
+The following list 5 options which may be overridden when loading the module.
+
+   use Sereal qw(encode_sereal decode_sereal);
+
+   use MCE::Grep
+         max_workers => 4,                    ## Default 'auto' 
+         chunk_size  => 100,                  ## Default 'auto'
+         tmp_dir     => "/path/to/app/tmp",   ## $MCE::Signal::tmp_dir
+         freeze      => \&encode_sereal,      ## \&Storable::freeze
+         thaw        => \&decode_sereal       ## \&Storable::thaw
+   ;
+
+There is a simplier way to enable Sereal with MCE 1.5. The following will
+attempt to use Sereal if available, otherwise will default back to using
+Storable for serialization.
+
+   use MCE::Grep Sereal => 1;
+
+   ## Serialization is through Sereal if available.
+   my @m2 = mce_grep { $_ % 5 == 0 } 1..10000;
+
+=head1 CUSTOMIZING MCE
+
+=over 2
 
 =item init
 
-   MCE::Grep::init {
+The init function takes a hash of MCE options. The gather option, if specified,
+will be set to undef due to being used internally by the module.
 
-      ## This form is available for configuring MCE options
-      ## before running.
+   use MCE::Grep;
+
+   MCE::Grep::init {
+      chunk_size => 1, max_workers => 4,
 
       user_begin => sub {
-         print "## ", MCE->wid, "\n";
-      }
+         print "## ", MCE->wid, " started\n";
+      },
+
       user_end => sub {
-         ...
+         print "## ", MCE->wid, " completed\n";
       }
    };
 
+   my @a = mce_grep { $_ % 5 == 0 } 1..100;
+
+   print "\n", "@a", "\n";
+
+   -- output
+
+   ## 2 started
+   ## 3 started
+   ## 1 started
+   ## 4 started
+   ## 3 completed
+   ## 4 completed
+   ## 1 completed
+   ## 2 completed
+
+   5 10 15 20 25 30 35 40 45 50 55 60 65 70 75 80 85 90 95 100
+
+=back
+
+=head1 API USAGE
+
+=over 2
+
+=item mce_grep { code } list
+
+Input data can be specified using a list or passing a reference to an array.
+
+   my @a = mce_grep { /[2357]/ } 1..1000;
+   my @b = mce_grep { /[2357]/ } [ 1..1000 ];
+
+=item mce_grep_f { code } file
+
+The fastest of these is the /path/to/file. Workers communicate the next offset
+position among themselves without any interaction by the manager process.
+
+   my @c = mce_grep_f { /phrase/ } "/path/to/file";
+   my @d = mce_grep_f { /phrase/ } $file_handle;
+   my @e = mce_grep_f { /phrase/ } \$scalar;
+
+=item mce_grep_s { code } sequence
+
+Sequence can be specified as a list, an array reference, or a hash reference.
+The functions require both begin and end values to run. Step and format are
+optional. The format is passed to sprintf (% can be omitted below).
+
+   my ($beg, $end, $step, $fmt) = (10, 20, 0.1, "%4.1f");
+
+   my @f = mce_grep_s { /[1234]\.[5678]/ } $beg, $end, $step, $fmt;
+   my @g = mce_grep_s { /[1234]\.[5678]/ } [ $beg, $end, $step, $fmt ];
+
+   my @h = mce_grep_s { /[1234]\.[5678]/ } {
+      begin => $beg, end => $end, step => $step, format => $fmt
+   };
+
+=back
+
+=head1 MANUAL SHUTDOWN
+
+=over 2
+
 =item finish
 
-   MCE::Grep::finish();   ## This is called automatically.
+MCE workers remain persistent as much as possible after running. Shutdown
+occurs when the script exits. One can manually shutdown MCE by simply calling
+finish after running. This resets the MCE instance.
+
+   use MCE::Grep;
+
+   MCE::Grep::init {
+      chunk_size => 20, max_workers => 'auto'
+   };
+
+   my @a = mce_grep { ... } 1..100;
+
+   MCE::Grep::finish;
 
 =back
 
-=head1 PERSISTENT WORKERS
+=head1 INDEX
 
-=over
-
-=item initp
-
-TODO ...
-
-=item mce_grepp
-
-TODO ...
-
-=back
-
-=head1 SEE ALSO
-
-L<MCE::Flow>, L<MCE::Loop>, L<MCE::Map>, L<MCE::Stream>,
-L<MCE::Queue>, L<MCE>
+L<MCE>
 
 =head1 AUTHOR
 

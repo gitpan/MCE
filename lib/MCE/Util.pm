@@ -1,7 +1,6 @@
 ###############################################################################
 ## ----------------------------------------------------------------------------
-## MCE::Util
-## -- Provides utility functions for Many-Core Engine.
+## MCE::Util - Public and private utility functions for Many-core Engine.
 ##
 ###############################################################################
 
@@ -12,7 +11,7 @@ use warnings;
 
 use base qw( Exporter );
 
-our $VERSION = '1.499_001'; $VERSION = eval $VERSION;
+our $VERSION = '1.499_002'; $VERSION = eval $VERSION;
 
 our @EXPORT_OK = qw( get_ncpu );
 our %EXPORT_TAGS = ( all => \@EXPORT_OK );
@@ -86,9 +85,8 @@ sub get_ncpu {
          last OS_CHECK;
       };
 
-      require Carp;
-      Carp::croak(
-         "MCE::Util::get_ncpu: command failed or unknown operating system\n"
+      _croak(
+         "MCE::Util: command failed or unknown operating system\n"
       );
    }
 
@@ -101,11 +99,23 @@ sub get_ncpu {
 ##
 ###############################################################################
 
+sub _croak {
+
+   unless (defined $MCE::VERSION) {
+      $\ = undef; require Carp; goto &Carp::croak;
+   } else {
+      goto &MCE::_croak;
+   }
+
+   return;
+}
+
 sub _parse_max_workers {
 
    my ($_max_workers) = @_;
 
-   return $_max_workers unless (defined $_max_workers);
+   return $_max_workers
+      unless (defined $_max_workers);
 
    if ($_max_workers =~ /^auto(?:$|\s*([\-\+\/\*])\s*(.+)$)/i) {
       my $_ncpu = get_ncpu();
@@ -122,6 +132,69 @@ sub _parse_max_workers {
    return $_max_workers;
 }
 
+sub _parse_chunk_size {
+
+   my ($_chunk_size, $_max_workers, $_params, $_input_data, $_array_size) = @_;
+
+   return $_chunk_size
+      if (!defined $_chunk_size || !defined $_max_workers);
+
+   $_chunk_size = $_params->{chunk_size}
+      if (defined $_params && exists $_params->{chunk_size});
+
+   if ($_chunk_size eq 'auto') {
+      my $_size = (defined $_input_data && ref $_input_data eq 'ARRAY')
+         ? scalar @{ $_input_data } : $_array_size;
+
+      if (defined $_params && exists $_params->{sequence}) {
+         my ($_begin, $_end, $_step);
+
+         if (ref $_params->{sequence} eq 'HASH') {
+            $_begin = $_params->{sequence}->{begin};
+            $_end   = $_params->{sequence}->{end};
+            $_step  = $_params->{sequence}->{step} || 1;
+         }
+         else {
+            $_begin = $_params->{sequence}->[0];
+            $_end   = $_params->{sequence}->[1];
+            $_step  = $_params->{sequence}->[2] || 1;
+         }
+
+         $_size = abs($_end - $_begin) / $_step + 1
+            if (!defined $_input_data && !$_array_size);
+      }
+      
+      if (defined $_params && exists $_params->{_file}) {
+         my $_ref = ref $_params->{_file};
+
+         if ($_ref eq 'SCALAR') {
+            $_size = length ${ $_params->{_file} };
+         } elsif ($_ref eq '') {
+            $_size = -s $_params->{_file};
+         } else {
+            $_size = 0; $_chunk_size = 245760;
+         }
+
+         if ($_size) {
+            $_chunk_size = int($_size / $_max_workers + 0.5);
+            $_chunk_size = 245760 if $_chunk_size > 245760;
+            $_chunk_size = 1 if $_chunk_size <= 8192;
+         }
+      }
+      else {
+         $_chunk_size = int($_size / $_max_workers + 0.5);
+         $_chunk_size = 8000 if $_chunk_size > 8000;
+         $_chunk_size = 1 if $_chunk_size < 1;
+      }
+
+      if (defined $_params && exists $_params->{sequence}) {
+         $_chunk_size = 2 if $_chunk_size < 2;
+      }
+   }
+
+   return $_chunk_size;
+}
+
 1;
 
 __END__
@@ -134,11 +207,11 @@ __END__
 
 =head1 NAME
 
-MCE::Util - Provides utility functions for Many-Core Engine.
+MCE::Util - Public and private utility functions for Many-core Engine
 
 =head1 VERSION
 
-This document describes MCE::Util version 1.499_001
+This document describes MCE::Util version 1.499_002
 
 =head1 SYNOPSIS
 
@@ -146,7 +219,8 @@ This document describes MCE::Util version 1.499_001
 
 =head1 DESCRIPTION
 
-Utility module for MCE. Nothing is exported by default. Exportable is get_ncpu.
+This is a utility module for MCE. Nothing is exported by default. Exportable
+is get_ncpu.
 
 =head2 get_ncpu()
 
@@ -169,13 +243,15 @@ Specifying 'auto' for max_workers calls MCE::Util::get_ncpu automatically.
 The portable code for detecting the number of processors was borrowed from
 L<Test::Smoke::SysInfo>.
 
+=head1 INDEX
+
+L<MCE>
+
 =head1 AUTHOR
 
 Mario E. Roy, S<E<lt>marioeroy AT gmail DOT comE<gt>>
 
-=head1 COPYRIGHT AND LICENSE
-
-Copyright (C) 2013 by Mario E. Roy
+=head1 LICENSE
 
 This program is free software; you can redistribute it and/or modify it
 under the terms of either: the GNU General Public License as published
