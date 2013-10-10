@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.499_005'; $VERSION = eval $VERSION;
+our $VERSION = '1.500'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -313,7 +313,7 @@ MCE::Loop - Parallel loop model for building creative loops
 
 =head1 VERSION
 
-This document describes MCE::Loop version 1.499_005
+This document describes MCE::Loop version 1.500
 
 =head1 DESCRIPTION
 
@@ -416,7 +416,7 @@ The following list 5 options which may be overridden when loading the module.
          thaw        => \&decode_sereal       ## \&Storable::thaw
    ;
 
-There is a simplier way to enable Sereal with MCE 1.5. The following will
+There is a simpler way to enable Sereal with MCE 1.5. The following will
 attempt to use Sereal if available, otherwise will default back to using
 Storable for serialization.
 
@@ -455,7 +455,7 @@ The init function takes a hash of MCE options.
 
    print "\n", "@a{1..100}", "\n";
 
-   -- output
+   -- Output
 
    ## 3 started
    ## 1 started
@@ -480,7 +480,7 @@ The init function takes a hash of MCE options.
 =head1 API DOCUMENTATION
 
 The following assumes chunk_size equals 1 in order to demonstrate all the
-possiblities of passing input data for the loop.
+possibilities of passing input data into the loop.
 
 =over 2
 
@@ -517,6 +517,61 @@ optional. The format is passed to sprintf (% can be omitted below).
 
 =back
 
+The sequence engine can compute the begin and end items only for the chunk
+leaving out the items in between (hence boundaries only) with the bounds_only
+option. This option applies to sequence only and has no effect when chunk_size
+equals 1.
+
+The time to run for MCE below is 0.006s. This becomes 0.827s without the
+bounds_only option due to computing all items in between as well, thus
+creating a very large array. Basically, specify bounds_only => 1 when
+boundaries is all you need for looping inside the block; e.g Monte Carlo
+simulations. Time was measured using 1 worker to emphasize the difference.
+
+   use MCE::Loop;
+
+   MCE::Loop::init {
+      max_workers => 1,
+    # chunk_size  => 'auto',     ## btw, 'auto' will never drop below 2
+      chunk_size  => 1_250_000,
+      bounds_only => 1
+   };
+
+   ## For sequence, the input scalar $_ points to $chunk_ref
+   ## when chunk_size > 1, otherwise equals $chunk_ref->[0].
+   ##
+   ## mce_loop_s {
+   ##    my $begin = $_->[0]; my $end = $_->[-1];
+   ##
+   ##    for ($begin .. $end) {
+   ##       ... have fun with MCE ...
+   ##    }
+   ##
+   ## } 1, 10_000_000;
+
+   mce_loop_s {
+      my ($mce, $chunk_ref, $chunk_id) = @_;
+
+      ## $chunk_ref contains just 2 items, not 1_250_000
+
+      my $begin = $chunk_ref->[ 0];
+      my $end   = $chunk_ref->[-1];   ## or $chunk_ref->[1]
+
+      MCE->printf("%7d .. %8d\n", $begin, $end);
+
+   } 1, 10_000_000;
+
+   -- Output
+
+         1 ..  1250000
+   1250001 ..  2500000
+   2500001 ..  3750000
+   3750001 ..  5000000
+   5000001 ..  6250000
+   6250001 ..  7500000
+   7500001 ..  8750000
+   8750001 .. 10000000
+
 =head1 GATHERING DATA
 
 Unlike MCE::Map where gather and output order are done for you automatically,
@@ -541,7 +596,7 @@ The gather method can be called multiple times within the block unlike return
 which would leave the block. Therefore, think of gather as yielding results
 immediately to the manager process without actually leaving the block.
 
-   use MCE::Loop chunk_size => 1, max_workers => '3';
+   use MCE::Loop chunk_size => 1, max_workers => 3;
 
    my @hosts = qw(
       hosta hostb hostc hostd hoste
@@ -594,7 +649,7 @@ immediately to the manager process without actually leaving the block.
    Worker 1: Hello from hoste
    Exit status: 0
 
-Serialization is automatic behind the scene. The following uses an anoymous
+Serialization is automatic behind the scene. The following uses an anonymous
 array containing 3 elements when gathering data. It's your choice. Obviously,
 calling gather once will be more efficient for IPC.
 

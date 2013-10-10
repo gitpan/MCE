@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.499_005'; $VERSION = eval $VERSION;
+our $VERSION = '1.500'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -334,7 +334,7 @@ MCE::Map - Parallel map model similar to the native map function
 
 =head1 VERSION
 
-This document describes MCE::Map version 1.499_005
+This document describes MCE::Map version 1.500
 
 =head1 SYNOPSIS
 
@@ -346,9 +346,9 @@ This document describes MCE::Map version 1.499_005
    my @b = mce_map { $_ * $_ } [ 1..10000 ];
 
    ## File_path, glob_ref, or scalar_ref
-   my @c = mce_map_f { chomp; do_something($_) } "/path/to/file";
-   my @d = mce_map_f { chomp; do_something($_) } $file_handle;
-   my @e = mce_map_f { chomp; do_something($_) } \$scalar;
+   my @c = mce_map_f { chomp; $_ } "/path/to/file";
+   my @d = mce_map_f { chomp; $_ } $file_handle;
+   my @e = mce_map_f { chomp; $_ } \$scalar;
 
    ## Sequence of numbers (begin, end [, step, format])
    my @f = mce_map_s { $_ * $_ } 1, 10000, 5;
@@ -380,7 +380,7 @@ code block requires more CPU code-wise.
    my @m1 =     map { calc } 1..1000000;                  ## 0.756 secs
    my @m2 = mce_map { calc } 1..1000000;                  ## 0.623 secs
 
-The mce_map_s funtion will provide better times, useful when input data is
+The mce_map_s function will provide better times, useful when input data is
 simply a range of numbers. Workers generate sequences mathematically among
 themselves without any interaction from the manager process. Two arguments
 are required for mce_map_s (begin, end). Step defaults to 1 if begin is
@@ -423,7 +423,7 @@ The following list 5 options which may be overridden when loading the module.
          thaw        => \&decode_sereal       ## \&Storable::thaw
    ;
 
-There is a simplier way to enable Sereal with MCE 1.5. The following will
+There is a simpler way to enable Sereal with MCE 1.5. The following will
 attempt to use Sereal if available, otherwise will default back to using
 Storable for serialization.
 
@@ -459,7 +459,7 @@ will be set to undef due to being used internally by the module.
 
    print "\n", "@a", "\n";
 
-   -- output
+   -- Output
 
    ## 2 started
    ## 1 started
