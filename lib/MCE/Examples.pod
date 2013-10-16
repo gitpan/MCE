@@ -5,7 +5,7 @@ MCE::Examples - A list of examples demonstrating Many-core Engine
 
 =head1 VERSION
 
-This document describes MCE::Examples version 1.500
+This document describes MCE::Examples version 1.501
 
 =head1 DESCRIPTION
 
@@ -27,6 +27,9 @@ patterns and word count aggregation.
              null fields. It's many times faster than the binary
              egrep command. Try against a large file containing
              very long lines.
+
+   flow_model.pl
+             Demonstrates MCE::Flow, MCE::Queue, and MCE->gather.
 
    foreach.pl, forseq.pl, forchunk.pl
              These take the same sqrt example from Parallel::Loops
