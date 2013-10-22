@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.501'; $VERSION = eval $VERSION;
+our $VERSION = '1.502'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -72,6 +72,8 @@ sub import {
 }
 
 END {
+   return if (defined $_MCE && $_MCE->wid);
+
    MCE::Grep::finish();
 }
 
@@ -255,7 +257,7 @@ sub mce_grep (&@) {
       $_MCE->shutdown() if (defined $_MCE);
       $_prev_c = $_code;
 
-      $_MCE = MCE->new(
+      my %_options = (
          use_threads => 0, max_workers => $_max_workers, task_name => $_tag,
          gather => \&_gather, user_func => sub {
 
@@ -269,11 +271,17 @@ sub mce_grep (&@) {
       );
 
       if (defined $_params) {
-         my $_p = $_params; foreach (keys %{ $_p }) {
+         foreach (keys %{ $_params }) {
             next if ($_ eq 'input_data');
-            $_MCE->{$_} = $_p->{$_};
+
+            _croak("MCE::Grep: '$_' is not a valid constructor argument")
+               unless (exists $MCE::_valid_fields_new{$_});
+
+            $_options{$_} = $_params->{$_};
          }
       }
+
+      $_MCE = MCE->new(%_options);
    }
 
    if (defined $_input_data) {
@@ -334,7 +342,7 @@ MCE::Grep - Parallel grep model similar to the native grep function
 
 =head1 VERSION
 
-This document describes MCE::Grep version 1.501
+This document describes MCE::Grep version 1.502
 
 =head1 SYNOPSIS
 
@@ -371,22 +379,22 @@ quickly diminishes as the complexity of the code block increases.
 Chunking, enabled by default, greatly reduces the overhead behind the scene.
 The time for mce_grep below also includes the time for data exchanges between
 the manager and worker processes. More parallelization will be seen when the
-code block requires more CPU time code-wise.
+code block requires additional CPU time code-wise.
 
    my @m1 =     grep { /[2357][1468][9]/ } 1..1000000;    ## 0.653 secs
    my @m2 = mce_grep { /[2357][1468][9]/ } 1..1000000;    ## 0.347 secs
 
-The mce_grep_s function will provide better times, useful when input data is
-simply a range of numbers. Workers generate sequences mathematically among
-themselves without any interaction from the manager process. Two arguments
-are required for mce_grep_s (begin, end). Step defaults to 1 if begin is
-smaller than end, otherwise -1.
+The mce_grep_s function will provide better times, useful when the input data
+is simply a range of numbers. Workers generate sequences mathematically among
+themselves without any interaction from the manager process. Two arguments are
+required for mce_grep_s (begin, end). Step defaults to 1 if begin is smaller
+than end, otherwise -1.
 
    my @m3 = mce_grep_s { /[2357][1468][9]/ } 1, 1000000;  ## 0.271 secs
 
-Although this documentation is about MCE::Grep, the L<MCE::Stream> module can
-write results immediately without waiting for all chunks to complete. This is
-made possible by passing the reference of the array (in this case @m4 and @m5).
+Although this document is about MCE::Grep, the L<MCE::Stream> module can write
+results immediately without waiting for all chunks to complete. This is made
+possible by passing the reference of the array (in this case @m4 and @m5).
 
    use MCE::Stream default_mode => 'grep';
 
@@ -426,12 +434,12 @@ Storable for serialization.
 
 =head1 CUSTOMIZING MCE
 
-=over 2
+=over 3
 
 =item init
 
-The init function takes a hash of MCE options. The gather option, if specified,
-will be set to undef due to being used internally by the module.
+The init function accepts a hash of MCE options. The gather option, if
+specified, will be set to undef due to being used internally by the module.
 
    use MCE::Grep;
 
@@ -468,11 +476,11 @@ will be set to undef due to being used internally by the module.
 
 =head1 API DOCUMENTATION
 
-=over 2
+=over 3
 
 =item mce_grep { code } list
 
-Input data can be specified using a list or passing a reference to an array.
+Input data can be defined using a list or passing a reference to an array.
 
    my @a = mce_grep { /[2357]/ } 1..1000;
    my @b = mce_grep { /[2357]/ } [ 1..1000 ];
@@ -488,9 +496,9 @@ position among themselves without any interaction from the manager process.
 
 =item mce_grep_s { code } sequence
 
-Sequence can be specified as a list, an array reference, or a hash reference.
+Sequence can be defined as a list, an array reference, or a hash reference.
 The functions require both begin and end values to run. Step and format are
-optional. The format is passed to sprintf (% can be omitted below).
+optional. The format is passed to sprintf (% may be omitted below).
 
    my ($beg, $end, $step, $fmt) = (10, 20, 0.1, "%4.1f");
 
@@ -505,7 +513,7 @@ optional. The format is passed to sprintf (% can be omitted below).
 
 =head1 MANUAL SHUTDOWN
 
-=over 2
+=over 3
 
 =item finish
 

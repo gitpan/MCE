@@ -1,6 +1,6 @@
 ###############################################################################
 ## ----------------------------------------------------------------------------
-## MCE::Subs - Exports functions mapped directly to MCE's methods.
+## MCE::Subs - Exports functions mapped directly to MCE methods.
 ##
 ###############################################################################
 
@@ -11,7 +11,7 @@ use warnings;
 
 use MCE;
 
-our $VERSION = '1.501'; $VERSION = eval $VERSION;
+our $VERSION = '1.502'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -189,11 +189,11 @@ __END__
 
 =head1 NAME
 
-MCE::Subs - Exports functions mapped directly to MCE's methods
+MCE::Subs - Exports functions mapped directly to MCE methods
 
 =head1 VERSION
 
-This document describes MCE::Subs version 1.501
+This document describes MCE::Subs version 1.502
 
 =head1 SYNOPSIS
 
@@ -256,13 +256,15 @@ comma after the file handle.
    MCE->say("STDERR", $error_msg);          ## the bare-word FH.
    MCE->say($fh, $error_msg);
 
-   mce_print STDERR, $error_msg, "\n";      ## Quotes can be omitted
+   mce_print STDERR, $error_msg, "\n";      ## Quotes are optional
    mce_say STDERR, $error_msg;              ## around the bare-word FH.
    mce_say $fh, $error_msg;
 
 =head1 FUNCTIONS for the MANAGER PROCESS via ( :manager )
 
-=over
+MCE methods are described in L<MCE::Core>.
+
+=over 3
 
 =item mce_abort
 
@@ -300,7 +302,9 @@ comma after the file handle.
 
 =head1 FUNCTIONS for MCE WORKERS via ( :worker )
 
-=over
+MCE methods are described in L<MCE::Core>.
+
+=over 3
 
 =item mce_abort
 
@@ -334,7 +338,9 @@ comma after the file handle.
 
 =head1 GETTERS for MCE ATTRIBUTES via ( :getter )
 
-=over
+MCE methods are described in L<MCE::Core>.
+
+=over 3
 
 =item mce_chunk_id
 

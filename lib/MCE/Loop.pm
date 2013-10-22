@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.501'; $VERSION = eval $VERSION;
+our $VERSION = '1.502'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -72,6 +72,8 @@ sub import {
 }
 
 END {
+   return if (defined $_MCE && $_MCE->wid);
+
    MCE::Loop::finish();
 }
 
@@ -238,17 +240,23 @@ sub mce_loop (&@) {
       $_MCE->shutdown() if (defined $_MCE);
       $_prev_c = $_code;
 
-      $_MCE = MCE->new(
+      my %_options = (
          max_workers => $_max_workers, task_name => $_tag,
          user_func => $_code
       );
 
       if (defined $_params) {
-         my $_p = $_params; foreach (keys %{ $_p }) {
+         foreach (keys %{ $_params }) {
             next if ($_ eq 'input_data');
-            $_MCE->{$_} = $_p->{$_};
+
+            _croak("MCE::Loop: '$_' is not a valid constructor argument")
+               unless (exists $MCE::_valid_fields_new{$_});
+
+            $_options{$_} = $_params->{$_};
          }
       }
+
+      $_MCE = MCE->new(%_options);
    }
 
    my @_a; my $_wa = wantarray; $_MCE->{gather} = \@_a if (defined $_wa);
@@ -313,7 +321,7 @@ MCE::Loop - Parallel loop model for building creative loops
 
 =head1 VERSION
 
-This document describes MCE::Loop version 1.501
+This document describes MCE::Loop version 1.502
 
 =head1 DESCRIPTION
 
@@ -329,9 +337,8 @@ are the same as writing a user_func block for the core API.
 
 Beginning with MCE 1.5, the next input item is placed into the input scalar
 variable $_ when chunk_size equals 1. Otherwise, $_ points to $chunk_ref
-containing many items. Basically, line 2 can be omitted from your code when
-using $_. One can call MCE->chunk_id to obtain the chunk_id for the current
-chunk.
+containing many items. Basically, line 2 below may be omitted from your code
+when using $_. One can call MCE->chunk_id to obtain the current chunk id.
 
    line 1:  user_func => sub {
    line 2:     my ($mce, $chunk_ref, $chunk_id) = @_;
@@ -400,7 +407,7 @@ This means having to loop through the chunk from within the block.
 
 Chunking reduces the number of IPC calls behind the scene. Think in terms of
 chunks whenever processing a large amount of data. For relatively small data,
-choosing 1 for chunk_size is quite fine.
+choosing 1 for chunk_size is fine.
 
 =head1 OVERRIDING DEFAULTS
 
@@ -431,11 +438,11 @@ Storable for serialization.
 
 =head1 CUSTOMIZING MCE
 
-=over 2
+=over 3
 
 =item init
 
-The init function takes a hash of MCE options.
+The init function accepts a hash of MCE options.
 
    use MCE::Loop;
 
@@ -482,11 +489,11 @@ The init function takes a hash of MCE options.
 The following assumes chunk_size equals 1 in order to demonstrate all the
 possibilities of passing input data into the loop.
 
-=over 2
+=over 3
 
 =item mce_loop { code } list
 
-Input data can be specified using a list or passing a reference to an array.
+Input data can be defined using a list or passing a reference to an array.
 
    mce_loop { $_ } 1..1000;
    mce_loop { $_ } [ 1..1000 ];
@@ -502,9 +509,9 @@ position among themselves without any interaction from the manager process.
 
 =item mce_loop_s { code } sequence
 
-Sequence can be specified as a list, an array reference, or a hash reference.
+Sequence can be defined as a list, an array reference, or a hash reference.
 The functions require both begin and end values to run. Step and format are
-optional. The format is passed to sprintf (% can be omitted below).
+optional. The format is passed to sprintf (% may be omitted below).
 
    my ($beg, $end, $step, $fmt) = (10, 20, 0.1, "%4.1f");
 
@@ -518,9 +525,8 @@ optional. The format is passed to sprintf (% can be omitted below).
 =back
 
 The sequence engine can compute the begin and end items only for the chunk
-leaving out the items in between (hence boundaries only) with the bounds_only
-option. This option applies to sequence only and has no effect when chunk_size
-equals 1.
+leaving out the items in between with the bounds_only (boundaries only) option.
+This option applies to sequence and has no effect when chunk_size equals 1.
 
 The time to run for MCE below is 0.006s. This becomes 0.827s without the
 bounds_only option due to computing all items in between as well, thus
@@ -649,9 +655,8 @@ immediately to the manager process without actually leaving the block.
    Worker 1: Hello from hoste
    Exit status: 0
 
-Serialization is automatic behind the scene. The following uses an anonymous
-array containing 3 elements when gathering data. It's your choice. Obviously,
-calling gather once will be more efficient for IPC.
+The following uses an anonymous array containing 3 elements when gathering
+data. Serialization is automatic behind the scene.
 
    my %h3 = mce_loop {
 
@@ -667,14 +672,14 @@ calling gather once will be more efficient for IPC.
       print "Exit status: ", $h3{$host}->[2], "\n\n";
    }
 
-Perhaps, you want more control with gather such as appending to an array while
+Perhaps you want more control with gather such as appending to an array while
 retaining output order. Although MCE::Map comes to mind, some folks want "full"
 control. And here we go... but this time around in chunking style... :)
 
 The two options passed to MCE::Loop are optional as they default to 'auto'. The
 beauty of chunking data is that IPC occurs once per chunk versus once per item.
 Although IPC is quite fast, chunking becomes beneficial the larger the data
-becomes. Thus, the reason for the demonstration below.
+becomes. Hence the reason for the demonstration below.
 
    use MCE::Loop chunk_size => 'auto', max_workers => 'auto';
 
@@ -741,7 +746,7 @@ The following does the same thing using the core API.
 
 =head1 MANUAL SHUTDOWN
 
-=over 2
+=over 3
 
 =item finish
 

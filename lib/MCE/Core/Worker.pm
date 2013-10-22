@@ -11,7 +11,7 @@
 
 package MCE::Core::Worker;
 
-our $VERSION = '1.501'; $VERSION = eval $VERSION;
+our $VERSION = '1.502'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -659,8 +659,8 @@ sub _worker_main {
    if ($_lock_chn) {
       close $_DAT_LOCK; undef $_DAT_LOCK;
    }
+
    close $_COM_LOCK; undef $_COM_LOCK;
-   close STDERR; close STDOUT;
 
    return;
 }

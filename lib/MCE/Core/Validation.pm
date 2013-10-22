@@ -11,7 +11,7 @@
 
 package MCE::Core::Validation;
 
-our $VERSION = '1.501'; $VERSION = eval $VERSION;
+our $VERSION = '1.502'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -131,7 +131,7 @@ sub _validate_args_s {
       my $_ref = ref $_s->{gather};
       _croak("$_tag: 'gather' is not a valid reference")
          if ( $_ref ne 'MCE::Queue' && $_ref ne 'Thread::Queue' &&
-              $_ref ne 'ARRAY' && $_ref ne 'CODE' );
+              $_ref ne 'ARRAY' && $_ref ne 'HASH' && $_ref ne 'CODE' );
    }
 
    if (defined $_s->{sequence}) {

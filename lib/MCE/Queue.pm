@@ -13,7 +13,7 @@ use Fcntl qw( :flock O_RDONLY );
 use Socket qw( :crlf AF_UNIX SOCK_STREAM PF_UNSPEC );
 use Scalar::Util qw( looks_like_number );
 
-our $VERSION = '1.501'; $VERSION = eval $VERSION;
+our $VERSION = '1.502'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -30,8 +30,7 @@ my $_loaded;
 
 sub import {
 
-   my $class = shift;
-   return if ($_loaded++);
+   my $class = shift; return if ($_loaded++);
 
    ## Process module arguments.
    while (my $_arg = shift) {
@@ -124,14 +123,14 @@ sub DESTROY {
 
    my $_queue = $_[0];
 
+   undef $_queue->{_datp}; undef $_queue->{_datq}; undef $_queue->{_heap};
+   delete $_queues->{ $_queue->{_id} } if (exists $_queue->{_id});
+
+   return if (defined $MCE::MCE && $MCE::MCE->wid);
+
    if (defined $_queue->{_qr_sock}) {
-
-      ## Close sockets.
-      CORE::shutdown $_queue->{_qr_sock}, 0;
-      CORE::shutdown $_queue->{_qw_sock}, 1;
-
-      close $_queue->{_qr_sock}; undef $_queue->{_qr_sock};
       close $_queue->{_qw_sock}; undef $_queue->{_qw_sock};
+      close $_queue->{_qr_sock}; undef $_queue->{_qr_sock};
    }
 
    return;
@@ -1600,7 +1599,7 @@ MCE::Queue - Hybrid queues (normal including priority) for Many-core Engine
 
 =head1 VERSION
 
-This document describes MCE::Queue version 1.501
+This document describes MCE::Queue version 1.502
 
 =head1 SYNOPSIS
 
@@ -1670,9 +1669,9 @@ This document describes MCE::Queue version 1.501
 =head1 DESCRIPTION
 
 This module provides a queue interface supporting normal and priority queues
-and utilizing the IPC engine behind MCE. Queue data resides under the manager
+and utilizing the IPC engine behind MCE. Data resides under the manager
 process. MCE::Queue also allows for a worker to create any number of queues
-locally not available to other workers including the manager processes. Think
+locally not available to other workers including the manager process. Think
 of a CPU having L3 (shared) and L1 (local) cache.
 
 The structure for the MCE::Queue object is provided below. It allows for normal
@@ -1723,7 +1722,7 @@ MCE::Queue can be utilized under the following conditions:
     A) use MCE;           B) use MCE::Queue;    C) use MCE::Queue;
        use MCE::Queue;       use MCE;
 
-=over 5
+=over 3
 
 =item A) Loading MCE prior to inclusion of MCE::Queue
 
@@ -1732,7 +1731,7 @@ resides under the manager process. Workers send/request data through IPC.
 
 Creating a queue from the worker process will cause the queue to run in local
 mode. The data resides under the worker process and not available to other
-workers or even the manager process.
+workers including the manager process.
 
 =item B) Loading MCE::Queue prior to inclusion of MCE
 
@@ -1743,17 +1742,17 @@ MCE.
 
 =item C) Loading MCE::Queue without MCE
 
-The dequeue method is non-blocking in this mode. This behaves like local mode
-when MCE is not present. As with local queuing, this mode is speedy due to
-minimum overhead and zero IPC.
+The dequeue method is non-blocking in this fashion. This behaves like local
+mode when MCE is not present. As with local queuing, this mode is speedy due
+to minimum overhead and zero IPC.
 
-Basically, the MCE module is not a requirement for using MCE::Queue.
+Essentially, the MCE module is not a prerequisite for using MCE::Queue.
 
 =back
 
 =head1 API DOCUMENTATION
 
-=over
+=over 3
 
 =item ->new ( [ queue => \@array ] )
 
@@ -1787,7 +1786,7 @@ first argument for the callback function is the queue object itself.
    ## Items are diverted to the gather callback function.
    $q7->enqueue( 'apple', 'orange' );
 
-The gather option is useful when wanting to temporarily store items into a
+The gather option is useful when wanting to temporarily store items in a
 holding area until output order can be obtained. Although a queue is not
 required to gather data in MCE, this is simply a demonstration of the
 gather option in the context of a queue.
@@ -1841,11 +1840,11 @@ the clear method when wanting to clear the content of the array.
 
 =item ->enqueue ( $item [, $item, ... ] )
 
-Adds a list of items onto the end of the normal queue.
+Appends a list of items onto the end of the normal queue.
 
 =item ->enqueuep ( $p, $item [, $item, ... ] )
 
-Adds a list of items onto the end of the priority queue with priority.
+Appends a list of items onto the end of the priority queue with priority.
 
 =item ->dequeue ( [ $count ] )
 
@@ -1857,10 +1856,10 @@ The method will block if the queue contains zero items. If the queue contains
 fewer than the requested number of items, the method will not block, but
 return the remaining items and undef for up to the count requested.
 
-The $count, used for requesting the number of times, is beneficial when workers
-are passing arguments through the queue. For this release, always remember to
-dequeue using the same multiple for count. This is unlike Thread::Queue which
-will block until the requested number of items are available.
+The $count, used for requesting the number of items, is beneficial when workers
+are passing parameters through the queue. For this release, always remember to
+dequeue using the same multiple for the count. This is unlike Thread::Queue
+which will block until the requested number of items are available.
 
 =item ->dequeue_nb ( [ $count ] )
 
@@ -1878,8 +1877,8 @@ Adds the list of items to the queue at the specified index with priority.
 
 =item ->pending ( void )
 
-Returns the number of items remaining in the queue. This includes both normal
-and priority data.
+Returns the number of items in the queue. This includes both normal and
+priority data.
 
 =item ->peek ( [ $index ] )
 
@@ -1906,22 +1905,21 @@ numbers, not the data.
 
 =head1 ACKNOWLEDGEMENTS
 
-The main reason for writing MCE::Queue was to have Thread::Queue-like module
-for workers spawned as children with MCE. When searching for queue modules on
-CPAN, I was pleasantly surprised at the number of modules out there for Perl.
-What stood out immediately were all the priority queues, heap queues, and
-whether or not FIFO/LIFO or highest/lowest first options were available. It
-seemed like a daunting task to undertake. And so, I began, failed, tried again,
-failed again, and finally on the 3rd attempt was pleased with the results.
+The main reason for writing MCE::Queue was to have a Thread::Queue-like module
+for workers spawned as children. I was pleasantly surprised at the number of
+modules on CPAN for queuing. What stood out immediately were all the priority
+queues, heap queues, and whether or not (FIFO/LIFO) or (highest/lowest first)
+options were available. Hence the reason for MCE::Queue supporting both normal
+and priority queues.
 
 The following provides a list of resources I've read in helping me create
 MCE::Queue for MCE.
 
-=over 5
+=over 3
 
 =item L<POE::Queue::Array>
 
-Two if statements were borrowed for checking if the item belongs at the end or
+Two if statements were adopted for checking if the item belongs at the end or
 head of the queue.
 
 =item L<List::Binary::Search>
@@ -1930,26 +1928,23 @@ After glancing over the bsearch_num_pos method for returning the best insert
 position, a couple variations of that were in order for MCE::Queue to
 accommodate the highest/lowest order routines.
 
-The private _heap_insert_low and _heap_insert_high methods inside MCE::Queue
-are simply the 2 if statements and the binary search algorithm.
-
 =item L<Heap-Priority>, L<List::Priority>
 
 At this point, I thought why not have both normal queues and priority queues
 be efficient. And with that in mind, also provide options to allow folks to
 choose LIFO/LILO, and highest/lowest order for the queue. The data structure
-in MCE::Queue is describe above.
+in MCE::Queue is described above.
 
-MCE workers may also benefit from being able to create local queues not
-available to other workers including the manager process. Thus, the reason
-for the 3 run modes described at the beginning of this document.
+MCE workers also benefit from being able to create local queues not available
+to other workers including the manager process. Hence the reason for the 3
+run modes described at the beginning of this document.
 
 =item L<Thread::Queue>
 
-Being that MCE supports both children and threads, Thread::Queue was used as
-a guide for naming and documenting the methods in MCE::Queue. Although not
-100% compatible, pay close attention to the dequeue method in MCE::Queue when
-requesting the number of items to dequeue.
+Being that MCE supports both children and threads, Thread::Queue was used
+as a template for identifying and documenting the methods in MCE::Queue.
+Although not 100% compatible, pay close attention to the dequeue method
+when requesting the number of items to dequeue.
 
    ->enqueuep( $p, $item [, $item, ... ] );    ## Extension (p)
    ->enqueue( $item [, $item, ... ] );
@@ -1963,7 +1958,7 @@ requesting the number of items to dequeue.
 =item L<Parallel-DataPipe>
 
 The idea for the recursive synopsis used in this document came from reading
-the example seen in this module's documentation.
+the example listed in this module's documentation.
 
 =back
 
