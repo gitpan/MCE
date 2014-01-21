@@ -1,6 +1,81 @@
 
 Revision history for MCE
 
+1.505 Thu Jan 21 01:30:00 EST 2014
+
+  [BUG FIXES]
+
+  * Delete $self->{input_data} inside the worker immediately during spawning
+    (if input_data is an ARRAY, GLOB, or Iterator reference).
+
+  * Reverted the logic for the RS (record separator) option from the 1.4x
+    code base. This is now working as expected.
+
+  * Specifying chunk_size => 'auto' via the 'init' method (all 5 models)
+    causes MCE validation to croak due to 'auto' being carried over to the
+    core API. Note that only the 5 models are allowed 'auto' for chunk_size
+    as of this time.
+
+  * Update to the MCE->do method. Previously, an undef sent back from the
+    callback function ended up as a blank value "". Both "" and undef are
+    now properly captured and sent back to the worker process.
+
+  * Added an if statement inside the abort method.
+  * Removed an old unlink _store.db statement (old code left behind).
+  * Removed an unused _next variable inside Request.pm.
+
+  [ENHANCEMENTS]
+
+  * Enhanced egrep.pl to handle additional options including recursion.
+    This script now supports many egrep options [ceHhiLlmnqRrsv].
+
+  * IO performance for examples/cat.pl was improved. The real focus here is
+    demonstrating output order.
+
+  * The chunk_size option can take a suffix; K (Kilobytes) or M (Megabytes).
+
+  * The following examples except --max-workers=NUM --chunk-size=NUM options.
+    cat.pl, egrep.pl, findnull.pl, scaling_pings.pl, and wc.pl
+
+  [NEW FEATURES]
+
+  * The input_data option can now receive an iterator reference. Added a
+    new example iterator.pl for demonstraton. In addition, there are
+    several examples listed under a new section "SYNTAX for INPUT_DATA"
+    under MCE::Core.pod.
+
+  * Added a new demo script; bin/mce_grep. This is a wrapper script for the
+    grep binary. This script supports agrep, grep, egrep, fgrep, & tre-agrep.
+    Simply create a link to mce_grep or make a copy. Both Windows and Cygwin
+    are supported as well. Recursion works for all binaries including agrep
+    (-R, -r options).
+
+      ln mce_grep mce_agrep
+      ln mce_grep mce_egrep
+      ln mce_grep mce_fgrep
+      ln mce_grep mce_tre-agrep
+
+    Try with the --lang=C option for faster execution time (-i runs faster).
+    Try mce_agrep or mce_tre-agrep against very large files. The speedup is
+    linear and makes good utilization of all available cores on the box.
+
+    One may specify the chunking level via the --chunk-level option. For large
+    files, specify 'file' (chunks file). For many small files, use 'list'.
+
+    I have tested against the following GnuWin32 packages found at this URL.
+    http://gnuwin32.sourceforge.net/packages.html
+
+      tre-0.7.5-bin.zip         ## Contains agrep.exe (also runs under Cygwin)
+      grep-2.5.4-bin.zip        ## Contains egrep.exe, fgrep.exe, grep.exe
+      libiconv-1.9.2-1-bin.zip  ## These are required for the GnuWin32 binaries.
+      libintl-0.14.4-bin.zip
+      pcre-7.0-bin.zip
+      regex-2.7-bin.zip
+
+    Btw, bin/mce_grep is optional and therefore not installed by default
+    when running make install for the MCE module. Simply copy mce_grep as
+    mce_agrep.pl for Windows. The .pl is optional for other environments.
+
 1.504 Tue Oct 29 16:00:00 EST 2013
 
   [BUG FIXES]

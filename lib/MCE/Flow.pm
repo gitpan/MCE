@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.504'; $VERSION = eval $VERSION;
+our $VERSION = '1.505'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -325,6 +325,7 @@ sub mce_flow (@) {
             next if ($_ eq 'max_workers' && ref $_p->{max_workers} eq 'ARRAY');
             next if ($_ eq 'task_name' && ref $_p->{task_name} eq 'ARRAY');
             next if ($_ eq 'input_data');
+            next if ($_ eq 'chunk_size');
 
             _croak("MCE::Flow: '$_' is not a valid constructor argument")
                unless (exists $MCE::_valid_fields_new{$_});
@@ -392,6 +393,8 @@ sub _validate_number {
 
    my $_n = $_[0]; my $_key = $_[1];
 
+   $_n =~ s/K\z//i; $_n =~ s/M\z//i;
+
    _croak("$_tag: '$_key' is not valid")
       if (!looks_like_number($_n) || int($_n) != $_n || $_n < 1);
 
@@ -414,7 +417,7 @@ MCE::Flow - Parallel flow model for building creative applications
 
 =head1 VERSION
 
-This document describes MCE::Flow version 1.504
+This document describes MCE::Flow version 1.505
 
 =head1 DESCRIPTION
 
@@ -441,7 +444,7 @@ MCE::Queue will be used for data flow among the sub-tasks.
 This calls for preserving output order. Remember to set $_order_id to 1 before
 running.
 
-   my ($_gather_ref, $_order_id, %_tmp); 
+   my ($_gather_ref, $_order_id, %_tmp);
 
    sub _preserve_order {
 
@@ -797,9 +800,24 @@ optional. The format is passed to sprintf (% may be omitted below).
       begin => $beg, end => $end, step => $step, format => $fmt
    };
 
+=item mce_flow { input_data => iterator }, sub { code }
+
+An iterator reference can by specified for input data. Notice the anonymous
+hash as the first argument to mce_flow. The only other way is to specify
+input_data via MCE::Flow::init. This prevents MCE::Flow from configuring
+the iterator reference as another user task which will not work.
+
+Iterators are described under "SYNTAX for INPUT_DATA" at L<MCE::Core>.
+
+   MCE::Flow::init {
+      input_data => iterator
+   };
+
+   mce_flow sub { $_ };
+
 =back
 
-The sequence engine can compute the begin and end items only for the chunk
+The sequence engine can compute the begin and end items only, for the chunk,
 leaving out the items in between with the bounds_only (boundaries only) option.
 This option applies to sequence and has no effect when chunk_size equals 1.
 

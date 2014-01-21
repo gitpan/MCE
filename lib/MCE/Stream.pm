@@ -16,7 +16,7 @@ use MCE::Util;
 
 use MCE::Queue;
 
-our $VERSION = '1.504'; $VERSION = eval $VERSION;
+our $VERSION = '1.505'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -409,6 +409,7 @@ sub mce_stream (@) {
             next if ($_ eq 'max_workers' && ref $_p->{max_workers} eq 'ARRAY');
             next if ($_ eq 'task_name' && ref $_p->{task_name} eq 'ARRAY');
             next if ($_ eq 'input_data');
+            next if ($_ eq 'chunk_size');
 
             _croak("MCE::Stream: '$_' is not a valid constructor argument")
                unless (exists $MCE::_valid_fields_new{$_});
@@ -564,6 +565,8 @@ sub _validate_number {
 
    my $_n = $_[0]; my $_key = $_[1];
 
+   $_n =~ s/K\z//i; $_n =~ s/M\z//i;
+
    _croak("$_tag: '$_key' is not valid")
       if (!looks_like_number($_n) || int($_n) != $_n || $_n < 1);
 
@@ -586,7 +589,7 @@ MCE::Stream - Parallel stream model for chaining multiple maps and greps
 
 =head1 VERSION
 
-This document describes MCE::Stream version 1.504
+This document describes MCE::Stream version 1.505
 
 =head1 SYNOPSIS
 
@@ -843,6 +846,21 @@ optional. The format is passed to sprintf (% may be omitted below).
    my @h = mce_stream_s sub { $_ }, {
       begin => $beg, end => $end, step => $step, format => $fmt
    };
+
+=item mce_stream { input_data => iterator }, sub { code }
+
+An iterator reference can by specified for input data. Notice the anonymous
+hash as the first argument to mce_stream. The only other way is to specify
+input_data via MCE::Stream::init. This prevents MCE::Stream from configuring
+the iterator reference as another user task which will not work.
+
+Iterators are described under "SYNTAX for INPUT_DATA" at L<MCE::Core>.
+
+   MCE::Stream::init {
+      input_data => iterator
+   };
+
+   my @a = mce_stream sub { $_ * 3 }, sub { $_ * 2 };
 
 =back
 

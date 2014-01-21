@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.504'; $VERSION = eval $VERSION;
+our $VERSION = '1.505'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -227,7 +227,7 @@ sub mce_grep (&@) {
 
    my $_input_data; my $_max_workers = $MAX_WORKERS; my $_r = ref $_[0];
 
-   if ($_r eq 'ARRAY' || $_r eq 'GLOB' || $_r eq 'SCALAR') {
+   if ($_r eq 'ARRAY' || $_r eq 'CODE' || $_r eq 'GLOB' || $_r eq 'SCALAR') {
       $_input_data = shift;
    }
 
@@ -279,6 +279,7 @@ sub mce_grep (&@) {
       if (defined $_params) {
          foreach (keys %{ $_params }) {
             next if ($_ eq 'input_data');
+            next if ($_ eq 'chunk_size');
 
             _croak("MCE::Grep: '$_' is not a valid constructor argument")
                unless (exists $MCE::_valid_fields_new{$_});
@@ -326,6 +327,8 @@ sub _validate_number {
 
    my $_n = $_[0]; my $_key = $_[1];
 
+   $_n =~ s/K\z//i; $_n =~ s/M\z//i;
+
    _croak("$_tag: '$_key' is not valid")
       if (!looks_like_number($_n) || int($_n) != $_n || $_n < 1);
 
@@ -348,7 +351,7 @@ MCE::Grep - Parallel grep model similar to the native grep function
 
 =head1 VERSION
 
-This document describes MCE::Grep version 1.504
+This document describes MCE::Grep version 1.505
 
 =head1 SYNOPSIS
 
@@ -514,6 +517,13 @@ optional. The format is passed to sprintf (% may be omitted below).
    my @h = mce_grep_s { /[1234]\.[5678]/ } {
       begin => $beg, end => $end, step => $step, format => $fmt
    };
+
+=item mce_grep { code } iterator
+
+An iterator reference can by specified for input data. Iterators are described
+under "SYNTAX for INPUT_DATA" at L<MCE::Core>.
+
+   my @a = mce_grep { $_ % 3 == 0 } make_iterator(10, 30, 2);
 
 =back
 

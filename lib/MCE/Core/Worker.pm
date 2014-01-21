@@ -11,7 +11,7 @@
 
 package MCE::Core::Worker;
 
-our $VERSION = '1.504'; $VERSION = eval $VERSION;
+our $VERSION = '1.505'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -170,11 +170,18 @@ END {
 
          chomp($_want_id = <$_DAU_W_SOCK>);
          chomp($_len     = <$_DAU_W_SOCK>);
-         read $_DAU_W_SOCK, $_buffer, $_len || 0;
-         flock $_DAT_LOCK, LOCK_UN if ($_lock_chn);
 
-         return $_buffer if ($_want_id == WANTS_SCALAR);
-         return $self->{thaw}($_buffer);
+         if ($_len >= 0) {
+            read $_DAU_W_SOCK, $_buffer, $_len || 0;
+            flock $_DAT_LOCK, LOCK_UN if ($_lock_chn);
+
+            return $_buffer if ($_want_id == WANTS_SCALAR);
+            return $self->{thaw}($_buffer);
+         }
+         else {
+            flock $_DAT_LOCK, LOCK_UN if ($_lock_chn);
+            return;
+         }
       }
    }
 
@@ -333,6 +340,7 @@ sub _worker_do {
    $self->{_run_mode}   = $_params_ref->{_run_mode};
    $self->{_single_dim} = $_params_ref->{_single_dim};
    $self->{use_slurpio} = $_params_ref->{_use_slurpio};
+   $self->{RS}          = $_params_ref->{_RS};
 
    _do_user_func_init($self);
 
@@ -394,6 +402,11 @@ sub _worker_do {
       require MCE::Core::Input::Request
          unless (defined $MCE::Core::Input::Request::VERSION);
       _worker_request_chunk($self, REQUEST_GLOB);
+   }
+   elsif ($_run_mode eq 'iterator') {
+      require MCE::Core::Input::Iterator
+         unless (defined $MCE::Core::Input::Iterator::VERSION);
+      _worker_user_iterator($self);
    }
    elsif ($_run_mode eq 'file') {
       require MCE::Core::Input::Handle
@@ -541,6 +554,11 @@ sub _worker_main {
 
    ## Commented out -- fails with the 'forks' module under FreeBSD.
    ## die "Private method called" unless (caller)[0]->isa( ref($self) );
+
+   if (exists $self->{input_data}) {
+      my $_ref = ref $self->{input_data};
+      delete $self->{input_data} if ($_ref && $_ref ne 'SCALAR');
+   }
 
    ## Define status ID.
    my $_use_threads = (defined $_task->{use_threads})
