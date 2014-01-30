@@ -11,7 +11,7 @@ use warnings;
 
 use base qw( Exporter );
 
-our $VERSION = '1.505'; $VERSION = eval $VERSION;
+our $VERSION = '1.506'; $VERSION = eval $VERSION;
 
 our @EXPORT_OK = qw( get_ncpu );
 our %EXPORT_TAGS = ( all => \@EXPORT_OK );
@@ -40,12 +40,12 @@ sub get_ncpu {
       local $_ = $^O;
 
       /linux/i && do {
-         my @output; local *PROC;
+         my $count; local *PROC;
          if ( open PROC, "< /proc/stat" ) {
-             @output = grep /^cpu\d/ => <PROC>;
+             $count = grep /^cpu\d/ => <PROC>;
              close PROC;
          }
-         $cpus = scalar @output if @output;
+         $cpus = $count if $count;
          last OS_CHECK;
       };
 
@@ -62,8 +62,8 @@ sub get_ncpu {
       };
 
       /hp-?ux/i && do {
-         my @output = grep /^processor/ => `ioscan -fnkC processor 2>/dev/null`;
-         $cpus = scalar @output if @output;
+         my $count = grep /^processor/ => `ioscan -fnkC processor 2>/dev/null`;
+         $cpus = $count if $count;
          last OS_CHECK;
       };
 
@@ -74,8 +74,8 @@ sub get_ncpu {
       };
 
       /solaris|sunos|osf/i && do {
-         my @output = grep /on-line/ => `psrinfo 2>/dev/null`;
-         $cpus = scalar @output if @output;
+         my $count = grep /on-line/ => `psrinfo 2>/dev/null`;
+         $cpus = $count if $count;
          last OS_CHECK;
       };
 
@@ -136,6 +136,12 @@ sub _parse_chunk_size {
 
    my ($_chunk_size, $_max_workers, $_params, $_input_data, $_array_size) = @_;
 
+   return $_chunk_size
+      if (!defined $_chunk_size || !defined $_max_workers);
+
+   $_chunk_size = $_params->{chunk_size}
+      if (defined $_params && exists $_params->{chunk_size});
+
    if ($_chunk_size =~ /([0-9\.]+)K\z/i) {
       $_chunk_size = int($1 * 1024 + 0.5);
    }
@@ -143,15 +149,11 @@ sub _parse_chunk_size {
       $_chunk_size = int($1 * 1024 * 1024 + 0.5);
    }
 
-   return $_chunk_size
-      if (!defined $_chunk_size || !defined $_max_workers);
-
-   $_chunk_size = $_params->{chunk_size}
-      if (defined $_params && exists $_params->{chunk_size});
-
    if ($_chunk_size eq 'auto') {
       my $_size = (defined $_input_data && ref $_input_data eq 'ARRAY')
          ? scalar @{ $_input_data } : $_array_size;
+
+      my $_is_file;
 
       if (defined $_params && exists $_params->{sequence}) {
          my ($_begin, $_end, $_step);
@@ -170,8 +172,7 @@ sub _parse_chunk_size {
          $_size = abs($_end - $_begin) / $_step + 1
             if (!defined $_input_data && !$_array_size);
       }
-      
-      if (defined $_params && exists $_params->{_file}) {
+      elsif (defined $_params && exists $_params->{_file}) {
          my $_ref = ref $_params->{_file};
 
          if ($_ref eq 'SCALAR') {
@@ -182,9 +183,21 @@ sub _parse_chunk_size {
             $_size = 0; $_chunk_size = 245760;
          }
 
+         $_is_file = 1;
+      }
+      elsif (defined $_input_data) {
+         if (ref $_input_data eq 'GLOB') {
+            $_is_file = 1; $_size = 0; $_chunk_size = 245760;
+         }
+         elsif (ref $_input_data eq 'SCALAR') {
+            $_is_file = 1; $_size = length $$_input_data;
+         }
+      }
+
+      if (defined $_is_file) {
          if ($_size) {
             $_chunk_size = int($_size / $_max_workers / 24 + 0.5);
-            $_chunk_size = 245760 if $_chunk_size > 245760;
+            $_chunk_size = 4194304 if $_chunk_size > 4194304;  ## 4M
             $_chunk_size = 2 if $_chunk_size <= 8192;
          }
       }
@@ -214,7 +227,7 @@ MCE::Util - Public and private utility functions for Many-core Engine
 
 =head1 VERSION
 
-This document describes MCE::Util version 1.505
+This document describes MCE::Util version 1.506
 
 =head1 SYNOPSIS
 

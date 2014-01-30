@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.505'; $VERSION = eval $VERSION;
+our $VERSION = '1.506'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -305,9 +305,9 @@ sub mce_flow (@) {
       $_input_data = $_params->{_file} if (exists $_params->{_file});
    }
 
-   ## -------------------------------------------------------------------------
-
    MCE::_save_state;
+
+   ## -------------------------------------------------------------------------
 
    if ($_init_mce) {
       $_MCE->shutdown() if (defined $_MCE);
@@ -322,6 +322,7 @@ sub mce_flow (@) {
          my $_p = $_params;
 
          foreach (keys %{ $_p }) {
+            next if ($_ eq '_file');
             next if ($_ eq 'max_workers' && ref $_p->{max_workers} eq 'ARRAY');
             next if ($_ eq 'task_name' && ref $_p->{task_name} eq 'ARRAY');
             next if ($_ eq 'input_data');
@@ -336,6 +337,17 @@ sub mce_flow (@) {
 
       $_MCE = MCE->new(%_options);
    }
+   else {
+      for (qw(
+         RS interval stderr_file stdout_file user_error user_output
+         job_delay submit_delay on_post_exit on_post_run user_args
+         flush_file flush_stderr flush_stdout gather
+      )) {
+         $_MCE->{$_} = $_params->{$_} if (exists $_params->{$_});
+      }
+   }
+
+   ## -------------------------------------------------------------------------
 
    my @_a; my $_wa = wantarray; $_MCE->{gather} = \@_a if (defined $_wa);
 
@@ -417,13 +429,14 @@ MCE::Flow - Parallel flow model for building creative applications
 
 =head1 VERSION
 
-This document describes MCE::Flow version 1.505
+This document describes MCE::Flow version 1.506
 
 =head1 DESCRIPTION
 
 MCE::Flow is great for writing custom apps to maximize on all available cores.
-It's trivial to parallelize with mce_stream as seen below. However, let's have
-MCE::Flow compute the same in parallel.
+This module was created to help one harness user_tasks within MCE.
+
+It's trivial to parallelize with mce_stream as shown below.
 
    ## Native map function
    my @a = map { $_ * 4 } map { $_ * 3 } map { $_ * 2 } 1..10000;
@@ -431,12 +444,14 @@ MCE::Flow compute the same in parallel.
    ## Same as with MCE::Stream (processing from right to left)
    @a = mce_stream
         sub { $_ * 4 }, sub { $_ * 3 }, sub { $_ * 2 }, 1..10000;
-     
+
+   ## Pass an array reference to have writes occur simultaneously
    mce_stream \@a,
         sub { $_ * 4 }, sub { $_ * 3 }, sub { $_ * 2 }, 1..10000;
 
-Let's have some fun. MCE::Flow makes it easy to harness user_tasks within MCE.
-MCE::Queue will be used for data flow among the sub-tasks.
+However, let's have MCE::Flow compute the same in parallel. MCE::Queue will be
+used for data flow among the sub-tasks. Also take a look at L<MCE::Step> for
+transparent use of MCE::Queue.
 
    use MCE::Flow;
    use MCE::Queue;
@@ -519,16 +534,16 @@ between sub-tasks, when wanting to run with the least overhead.
          my $chunk = $c->dequeue; last unless defined $chunk;
          my @ans; $chunk = MCE->thaw($chunk);
 
-         push @ans, map { $_ * 5 } @{ $chunk->[0] };
+         push @ans, map { $_ * 4 } @{ $chunk->[0] };
          MCE->gather(\@ans, $chunk->[1]);
       }
 
       return;
    }
 
-In summary, MCE::Flow builds out a MCE instance behind the scene automatically
-for you and starts running. Task_name can take an anonymous array as well as
-max_workers (not shown below).
+In summary, MCE::Flow builds out a MCE instance behind the scene and starts
+running. Both task_name (shown below) and max_workers can take an anonymous
+array for specifying the values individually for each sub-task.
 
    my @a; $_gather_ref = \@a; $_order_id = 1;
 
@@ -538,10 +553,11 @@ max_workers (not shown below).
 
    }, \&task_a, \&task_b, \&task_c, 1..10000;
 
-   print "@a" . "\n";
+   print "@a\n";
 
 If speed is not a concern and wanting to rid of all the MCE->freeze and
 MCE->thaw statements, simply enqueue and dequeue 2 items at a time.
+Or better yet, see L<MCE::Step> introduced in MCE 1.506.
 
    $b->enqueue(\@ans, $chunk_id)
 
@@ -565,7 +581,7 @@ time. Therefore, we must double the number of undefs into the queue.
 =head1 SYNOPSIS when CHUNK_SIZE EQUALS 1
 
 Although L<MCE::Loop> may be preferred for running using a single code block,
-the text below also applies to this module.
+the text below also applies to this module, particularly for the first block.
 
 All models in MCE default to 'auto' for chunk_size. The arguments for the block
 are the same as writing a user_func block for the core API.
@@ -586,7 +602,7 @@ when using $_. One can call MCE->chunk_id to obtain the current chunk id.
    line 9:  }
 
 Follow this synopsis when chunk_size equals one. Looping is not required from
-within the block. The block is called once per each item.
+inside the first block. Hence, the block is called once per each item.
 
    ## Exports mce_flow, mce_flow_f, and mce_flow_s
    use MCE::Flow;
@@ -615,7 +631,7 @@ within the block. The block is called once per each item.
 =head1 SYNOPSIS when CHUNK_SIZE is GREATER THAN 1
 
 Follow this synopsis when chunk_size equals 'auto' or is greater than 1.
-This means having to loop through the chunk from within the block.
+This means having to loop through the chunk from inside the first block.
 
    use MCE::Flow;
 
@@ -677,8 +693,9 @@ Storable for serialization.
 
 =item init
 
-The init function accepts a hash of MCE options. Unlike with MCE::Stream, both
-gather and task_end options may be specified here.
+The init function accepts a hash of MCE options. Unlike with MCE::Stream,
+both the gather and bounds_only options may be specified when calling init
+(not shown below).
 
    use MCE::Flow;
 
@@ -720,7 +737,7 @@ gather and task_end options may be specified here.
 
 =back
 
-Like with MCE::Flow::init above, MCE options can also be specified using an
+Like with MCE::Flow::init above, MCE options can also be specified via an
 anonymous hash as the first argument. Both max_workers and task_name can take
 an anonymous array for setting values individually for each code block.
 
@@ -764,8 +781,7 @@ the first code block, thus processing from left-to-right.
 =head1 API DOCUMENTATION
 
 Although input data is optional for MCE::Flow, the following assumes chunk_size
-equals 1 in order to demonstrate all the possibilities of passing input data
-into the flow.
+equals 1 in order to demonstrate all the possibilities of passing input data.
 
 =over 3
 
@@ -818,7 +834,7 @@ Iterators are described under "SYNTAX for INPUT_DATA" at L<MCE::Core>.
 =back
 
 The sequence engine can compute the begin and end items only, for the chunk,
-leaving out the items in between with the bounds_only (boundaries only) option.
+leaving out the items in between with the bounds_only option (boundaries only).
 This option applies to sequence and has no effect when chunk_size equals 1.
 
 The time to run for MCE below is 0.006s. This becomes 0.827s without the
@@ -976,21 +992,27 @@ becomes. Hence the reason for the demonstration below.
 
    use MCE::Flow chunk_size => 'auto', max_workers => 'auto';
 
-   my (@m2, %_tmp); my $_order_id = 1;
+   sub output_iterator {
+      my %tmp; my $order_id = 1; my $gather_ref = $_[0];
 
-   sub preserve_order {
-      $_tmp{ (shift) } = \@_;
+      @{ $gather_ref } = ();     ## Optional: clear the array
 
-      while (1) {
-         last unless exists $_tmp{$_order_id};
-         push @m2, @{ $_tmp{$_order_id} };
-         delete $_tmp{$_order_id++};
-      }
+      return sub {
+         $tmp{ (shift) } = \@_;
 
-      return;
+         while (1) {
+            last unless exists $tmp{$order_id};
+            push @{ $gather_ref }, @{ $tmp{$order_id} };
+            delete $tmp{$order_id++};
+         }
+
+         return;
+      };
    }
 
-   MCE::Flow::init { gather => \&preserve_order };
+   my @m2;
+
+   MCE::Flow::init { gather => output_iterator(\@m2) };
 
    mce_flow sub {
       my @a; my ($mce, $chunk_ref, $chunk_id) = @_;
@@ -1006,7 +1028,7 @@ becomes. Hence the reason for the demonstration below.
 
    print scalar @m2, "\n";
 
-That was fast and fun. All 5 models support 'auto' for chunk_size whereas the
+That was fast and fun. All 6 models support 'auto' for chunk_size whereas the
 core API doesn't. Think of the models as the basis for providing JIT for MCE.
 They create the instance and tune max_workers plus chunk_size automatically
 irregardless of the hardware being run on.

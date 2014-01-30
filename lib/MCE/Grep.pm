@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.505'; $VERSION = eval $VERSION;
+our $VERSION = '1.506'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -237,6 +237,7 @@ sub mce_grep (&@) {
 
       delete $_p->{user_func}   if (exists $_p->{user_func});
       delete $_p->{user_tasks}  if (exists $_p->{user_tasks});
+      delete $_p->{use_slurpio} if (exists $_p->{use_slurpio});
       delete $_p->{bounds_only} if (exists $_p->{bounds_only});
       delete $_p->{gather}      if (exists $_p->{gather});
    }
@@ -250,9 +251,9 @@ sub mce_grep (&@) {
       $_input_data = $_params->{_file} if (exists $_params->{_file});
    }
 
-   ## -------------------------------------------------------------------------
-
    MCE::_save_state;
+
+   ## -------------------------------------------------------------------------
 
    if (!defined $_prev_c || $_prev_c != $_code) {
       $_MCE->shutdown() if (defined $_MCE);
@@ -260,24 +261,55 @@ sub mce_grep (&@) {
 
       my %_options = (
          use_threads => 0, max_workers => $_max_workers, task_name => $_tag,
-         gather => \&_gather, user_func => sub {
+         user_func => sub {
 
-            my @_a; my ($_mce, $_chunk_ref, $_chunk_id) = @_;
+            my ($_mce, $_chunk_ref, $_chunk_id) = @_;
+            my $_wantarray = $_mce->{user_args}[0];
 
-            if (ref $_chunk_ref) {
-             # foreach (@$_chunk_ref) { push (@_a, $_) if &$_code; }
-               push @_a, grep { &$_code } @{ $_chunk_ref };
+            if ($_wantarray) {
+               my @_a;
+
+               if (ref $_chunk_ref eq 'SCALAR') {
+                  local $/ = $_mce->{RS} if defined $_mce->{RS};
+                  open my  $_MEM_FH, '<', $_chunk_ref;
+                  while ( <$_MEM_FH> ) { push (@_a, $_) if &$_code; }
+                  close    $_MEM_FH;
+               }
+               else {
+                  if (ref $_chunk_ref) {
+                     push @_a, grep { &$_code } @$_chunk_ref;
+                  } else {
+                     push @_a, grep { &$_code } $_chunk_ref;
+                  }
+               }
+
+               MCE->gather(\@_a, $_chunk_id);
             }
             else {
-               push @_a, grep { &$_code } $_chunk_ref;
-            }
+               my $_cnt = 0;
 
-            MCE->gather(\@_a, $_chunk_id);
+               if (ref $_chunk_ref eq 'SCALAR') {
+                  local $/ = $_mce->{RS} if defined $_mce->{RS};
+                  open my  $_MEM_FH, '<', $_chunk_ref;
+                  while ( <$_MEM_FH> ) { $_cnt++ if &$_code; }
+                  close    $_MEM_FH;
+               }
+               else {
+                  if (ref $_chunk_ref) {
+                     $_cnt += grep { &$_code } @$_chunk_ref;
+                  } else {
+                     $_cnt += grep { &$_code } $_chunk_ref;
+                  }
+               }
+
+               MCE->gather($_cnt) if defined $_wantarray;
+            }
          }
       );
 
       if (defined $_params) {
          foreach (keys %{ $_params }) {
+            next if ($_ eq '_file');
             next if ($_ eq 'input_data');
             next if ($_ eq 'chunk_size');
 
@@ -290,6 +322,25 @@ sub mce_grep (&@) {
 
       $_MCE = MCE->new(%_options);
    }
+   else {
+      for (qw(
+         RS interval stderr_file stdout_file user_error user_output
+         job_delay submit_delay on_post_exit on_post_run user_args
+         flush_file flush_stderr flush_stdout
+      )) {
+         $_MCE->{$_} = $_params->{$_} if (exists $_params->{$_});
+      }
+   }
+
+   ## -------------------------------------------------------------------------
+
+   my $_cnt = 0; my $_wantarray = wantarray;
+
+   $_MCE->{use_slurpio} = ($_chunk_size > MCE::MAX_RECS_SIZE) ? 1 : 0;
+   $_MCE->{user_args} = [ $_wantarray ];
+
+   $_MCE->{gather} = $_wantarray
+      ? \&_gather : sub { $_cnt += $_[0]; return; };
 
    if (defined $_input_data) {
       @_ = (); $_MCE->process({ chunk_size => $_chunk_size }, $_input_data);
@@ -309,7 +360,14 @@ sub mce_grep (&@) {
 
    MCE::_restore_state;
 
-   return map { @{ $_ } } delete @_tmp{ 1 .. $_total_chunks };
+   if ($_wantarray) {
+      return map { @{ $_ } } delete @_tmp{ 1 .. $_total_chunks };
+   }
+   elsif (defined $_wantarray) {
+      return $_cnt;
+   }
+
+   return;
 }
 
 ###############################################################################
@@ -351,7 +409,7 @@ MCE::Grep - Parallel grep model similar to the native grep function
 
 =head1 VERSION
 
-This document describes MCE::Grep version 1.505
+This document describes MCE::Grep version 1.506
 
 =head1 SYNOPSIS
 
