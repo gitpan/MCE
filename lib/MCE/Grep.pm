@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.506'; $VERSION = eval $VERSION;
+our $VERSION = '1.507'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -322,15 +322,6 @@ sub mce_grep (&@) {
 
       $_MCE = MCE->new(%_options);
    }
-   else {
-      for (qw(
-         RS interval stderr_file stdout_file user_error user_output
-         job_delay submit_delay on_post_exit on_post_run user_args
-         flush_file flush_stderr flush_stdout
-      )) {
-         $_MCE->{$_} = $_params->{$_} if (exists $_params->{$_});
-      }
-   }
 
    ## -------------------------------------------------------------------------
 
@@ -409,7 +400,7 @@ MCE::Grep - Parallel grep model similar to the native grep function
 
 =head1 VERSION
 
-This document describes MCE::Grep version 1.506
+This document describes MCE::Grep version 1.507
 
 =head1 SYNOPSIS
 
@@ -475,6 +466,44 @@ possible by passing the reference of the array (in this case @m4 and @m5).
       ## Completed in 0.227 secs. Like with mce_grep_s, specifying a
       ## sequence specification turns out to be faster due to lesser
       ## overhead for the manager process.
+
+A good use-case for MCE::Grep is for searching through a large log file much
+like one might do using the native grep function. Lets assume the file contains
+a hundred thousand records separated by a string "::\n\n" between each record.
+The imaginary pattern used also returns less than 50 records.
+
+The native implementation is what one might do actually. What's not clearly
+visible here is the initial memory consumption, due to Perl reading the entire
+content into memory, prior to grep actually starting. A 300 MB file will
+consume roughly 640 MB. The time to run is 1.217 seconds for the file
+residing in the OS-level file-system cache.
+
+   $/ = "::\n\n";
+
+   open my $LOG, "<", "/path/to/log/file";
+   my @match = grep { $_ =~ /pattern/ } <$LOG>;
+   close $LOG;
+
+The memory utilization is much better with MCE; 8 workers * 23 MB = 184 MB.
+MCE caps at some point, therefore allowing one to process a file much larger
+than available memory. The time to run is 0.416 seconds (2.93x faster) which
+includes the overhead for chunking and serializing data back to the main
+process as if processing serially.
+
+   use MCE::Grep;
+
+   MCE::Grep::init { RS => "::\n\n" };
+
+   my @match = mce_grep_f { $_ =~ /pattern/ } "/path/to/file";
+
+It gets even better for counting though. The native grep function takes 1.136
+seconds to run whereas MCE takes just 0.155 seconds (7.33x faster).
+
+   ## Native Grep
+   my $count = grep { $_ =~ /pattern/ } <$LOG>;
+
+   ## MCE Grep
+   my $count = mce_grep_f { $_ =~ /pattern/ } "/path/to/file";
 
 =head1 OVERRIDING DEFAULTS
 

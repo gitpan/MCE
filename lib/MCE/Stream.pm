@@ -16,7 +16,7 @@ use MCE::Util;
 
 use MCE::Queue;
 
-our $VERSION = '1.506'; $VERSION = eval $VERSION;
+our $VERSION = '1.507'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -427,6 +427,10 @@ sub mce_stream (@) {
       $_MCE = MCE->new(%_options);
    }
    else {
+      ## Workers may persist after running. MCE::Stream allows options
+      ## to be passed using an anonymous hash. Therefore, lets update
+      ## the MCE instance. These options do not require respawning.
+
       for (qw(
          RS interval stderr_file stdout_file user_error user_output
          job_delay submit_delay on_post_exit on_post_run user_args
@@ -606,7 +610,7 @@ MCE::Stream - Parallel stream model for chaining multiple maps and greps
 
 =head1 VERSION
 
-This document describes MCE::Stream version 1.506
+This document describes MCE::Stream version 1.507
 
 =head1 SYNOPSIS
 
@@ -770,9 +774,11 @@ module (not shown below).
 
 =back
 
-Like with MCE::Stream::init above, MCE options can also be specified via an
-anonymous hash as the first argument. Both max_workers and task_name can take
-an anonymous array for setting values individually for each code block.
+Like with MCE::Stream::init above, MCE options may be specified using an
+anonymous hash for the first argument. Notice how both max_workers and
+task_name can take an anonymous array for setting values individually
+for each code block. Remember that MCE::Stream processes from
+right-to-left when setting the individual values.
 
    use MCE::Stream;
 

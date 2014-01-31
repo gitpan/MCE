@@ -14,7 +14,7 @@ use Scalar::Util qw( looks_like_number );
 use MCE;
 use MCE::Util;
 
-our $VERSION = '1.506'; $VERSION = eval $VERSION;
+our $VERSION = '1.507'; $VERSION = eval $VERSION;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -322,15 +322,6 @@ sub mce_map (&@) {
 
       $_MCE = MCE->new(%_options);
    }
-   else {
-      for (qw(
-         RS interval stderr_file stdout_file user_error user_output
-         job_delay submit_delay on_post_exit on_post_run user_args
-         flush_file flush_stderr flush_stdout
-      )) {
-         $_MCE->{$_} = $_params->{$_} if (exists $_params->{$_});
-      }
-   }
 
    ## -------------------------------------------------------------------------
 
@@ -409,7 +400,7 @@ MCE::Map - Parallel map model similar to the native map function
 
 =head1 VERSION
 
-This document describes MCE::Map version 1.506
+This document describes MCE::Map version 1.507
 
 =head1 SYNOPSIS
 
