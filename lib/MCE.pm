@@ -17,7 +17,7 @@ use Storable qw( );
 use Time::HiRes qw( time );
 use MCE::Signal;
 
-our $VERSION = '1.509'; $VERSION = eval $VERSION;
+our $VERSION = '1.510'; $VERSION = eval $VERSION;
 
 our (%_valid_fields_new, %_params_allowed_args, %_valid_fields_task);
 our ($_is_cygwin, $_is_MSWin32, $_is_WinEnv);
@@ -42,6 +42,7 @@ BEGIN {
    ## _chunk_id _mce_sid _mce_tid _pids _run_mode _single_dim _thrs _tids _wid
    ## _exiting _exit_pid _total_exited _total_running _total_workers _task_wid
    ## _send_cnt _sess_dir _spawned _state _status _task _task_id _wrk_status
+   ## _last_sref
    ##
    ## _bsb_r_sock _bsb_w_sock _bse_r_sock _bse_w_sock _com_r_sock _com_w_sock
    ## _dat_r_sock _dat_w_sock _que_r_sock _que_w_sock _data_channels _lock_chn
@@ -52,20 +53,20 @@ BEGIN {
       chunk_size input_data sequence job_delay spawn_delay submit_delay RS
       flush_file flush_stderr flush_stdout stderr_file stdout_file use_slurpio
       interval user_args user_begin user_end user_func user_error user_output
-      bounds_only gather on_post_exit on_post_run
+      bounds_only gather on_post_exit on_post_run parallel_io
    );
 
    %_params_allowed_args = map { $_ => 1 } qw(
       chunk_size input_data sequence job_delay spawn_delay submit_delay RS
       flush_file flush_stderr flush_stdout stderr_file stdout_file use_slurpio
       interval user_args user_begin user_end user_func user_error user_output
-      bounds_only gather on_post_exit on_post_run
+      bounds_only gather on_post_exit on_post_run parallel_io
    );
 
    %_valid_fields_task = map { $_ => 1 } qw(
       max_workers chunk_size input_data interval sequence task_end task_name
       bounds_only gather user_args user_begin user_end user_func use_threads
-      RS use_slurpio
+      RS use_slurpio parallel_io
    );
 
    $_is_cygwin  = ($^O eq 'cygwin');
@@ -385,6 +386,7 @@ sub new {
    $self->{flush_stderr} = $argv{flush_stderr} || 0;
    $self->{flush_stdout} = $argv{flush_stdout} || 0;
    $self->{use_slurpio}  = $argv{use_slurpio}  || 0;
+   $self->{parallel_io}  = $argv{parallel_io}  || 0;
 
    ## -------------------------------------------------------------------------
    ## Validation.
@@ -458,6 +460,9 @@ sub new {
    else {
       $_total_workers = $self->{max_workers};
    }
+
+   $self->{_last_sref} = (ref $self->{input_data} eq 'SCALAR')
+      ? $self->{input_data} : 0;
 
    $self->{_data_channels} = ($_total_workers < DATA_CHANNELS)
       ? $_total_workers : DATA_CHANNELS;
@@ -899,12 +904,21 @@ sub run {
       $self->{use_slurpio} = $self->{user_tasks}->[0]->{use_slurpio}
          if ($self->{user_tasks}->[0]->{use_slurpio});
 
+      $self->{parallel_io} = $self->{user_tasks}->[0]->{parallel_io}
+         if ($self->{user_tasks}->[0]->{parallel_io});
+
       $self->{RS} = $self->{user_tasks}->[0]->{RS}
          if ($self->{user_tasks}->[0]->{RS});
    }
 
-   $self->shutdown()
-      if ($_requires_shutdown || ref $self->{input_data} eq 'SCALAR');
+   $self->shutdown() if ($_requires_shutdown);
+
+   if (ref $self->{input_data} eq 'SCALAR') {
+      $self->shutdown()
+         unless $self->{_last_sref} == $self->{input_data};
+
+      $self->{_last_sref} = $self->{input_data};
+   }
 
    ## -------------------------------------------------------------------------
 
@@ -999,6 +1013,7 @@ sub run {
    my $_sequence      = $self->{sequence};
    my $_user_args     = $self->{user_args};
    my $_use_slurpio   = $self->{use_slurpio};
+   my $_parallel_io   = $self->{parallel_io};
    my $_sess_dir      = $self->{_sess_dir};
    my $_total_workers = $self->{_total_workers};
    my $_send_cnt      = $self->{_send_cnt};
@@ -1012,16 +1027,16 @@ sub run {
          '_chunk_size'  => $_chunk_size,   '_single_dim'  => $_single_dim,
          '_input_file'  => $_input_file,   '_interval'    => $_interval,
          '_sequence'    => $_sequence,     '_bounds_only' => $_bounds_only,
-         '_use_slurpio' => $_use_slurpio,  '_user_args'   => $_user_args,
-         '_RS'          => $_RS
+         '_use_slurpio' => $_use_slurpio,  '_parallel_io' => $_parallel_io,
+         '_user_args'   => $_user_args,    '_RS'          => $_RS
       );
       my %_params_nodata = (
          '_abort_msg'   => undef,          '_run_mode'    => 'nodata',
          '_chunk_size'  => $_chunk_size,   '_single_dim'  => $_single_dim,
          '_input_file'  => $_input_file,   '_interval'    => $_interval,
          '_sequence'    => $_sequence,     '_bounds_only' => $_bounds_only,
-         '_use_slurpio' => $_use_slurpio,  '_user_args'   => $_user_args,
-         '_RS'          => $_RS
+         '_use_slurpio' => $_use_slurpio,  '_parallel_io' => $_parallel_io,
+         '_user_args'   => $_user_args,    '_RS'          => $_RS
       );
 
       local $\ = undef; local $/ = $LF;
@@ -1319,7 +1334,7 @@ sub shutdown {
       if ($_is_mce_thr);
 
    $self->{_total_running} = $self->{_total_workers} = 0;
-   $self->{_total_exited}  = 0;
+   $self->{_total_exited}  = $self->{_last_sref}     = 0;
 
    return;
 }

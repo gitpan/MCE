@@ -5,7 +5,7 @@ MCE::Core - Documentation describing the core API for Many-core Engine
 
 =head1 VERSION
 
-This document describes MCE::Core version 1.509
+This document describes MCE::Core version 1.510
 
 =head1 SYNOPSIS
 
@@ -139,14 +139,21 @@ Below, a new instance is configured with all available options.
           ## Support for iterators was added in 1.505.
 
       use_slurpio  => 1,                 ## Default 0
-      use_threads  => 1,                 ## Default 0 or 1
+      parallel_io  => 1,                 ## Default 0
 
           ## Whether or not to enable slurpio when reading files
-          ## (passes raw chunk to user function).
+          ## Passes raw chunk (scalar ref) to user function.
+
+          ## The parallel_io option enables parallel reads during
+          ## large slurpio. Useful when reading from fast storage.
+          ## Do not enable parallel_io when running MCE on many
+          ## blades and reading input from a shared storage unit.
+
+      use_threads  => 1,                 ## Default 0 or 1
 
           ## By default MCE does forking (spawns child processes).
           ## MCE also supports threads via 2 threading libraries.
-          ##
+
           ## The use of threads in MCE requires that you include
           ## threads support prior to loading MCE. The use_threads
           ## option defaults to 1 when a thread library is present.
@@ -438,8 +445,8 @@ use_slurpio equals 0.
    }
 
 Specifying a value for input_data is pretty much straight forward for arrays
-and files. What about iterators? Ok, the next several examples all use an
-iterator reference for input_data.
+and files. What about iterators? The next several examples specify an iterator
+reference for input_data.
 
    use MCE;
 
@@ -492,6 +499,56 @@ iterator reference for input_data.
    26: 52
    28: 56
    30: 60
+
+The following example queries the DB for the next 1000 rows. Notice the use of
+fetchall_arrayref. The iterator function itself recieves one argument which is
+the chunk_size value (added in MCE 1.510).
+
+   use DBI;
+   use MCE;
+
+   sub db_iter {
+
+      my $dsn = "DBI:Oracle:host=db_server;port=db_port;sid=db_name";
+
+      my $dbh = DBI->connect($dsn, 'db_user', 'db_passwd') ||
+                die "Could not connect to database: $DBI::errstr";
+
+      my $sth = $dbh->prepare('select color, desc from table');
+
+      $sth->execute();
+
+      return sub {
+         my $chunk_size = shift;
+
+         if (my $aref = $sth->fetchall_arrayref(undef, $chunk_size)) {
+            return @{ $aref };
+         }
+
+         return;
+      }
+   }
+
+   ## Let's enumerate column indexes for easy column retrieval.
+   my ($i_color, $i_desc) = (0 .. 1);
+
+   MCE->new(
+      max_workers => 3, chunk_size => 1000,
+      input_data => db_iter(),
+
+      user_func => sub {
+         my ($mce, $chunk_ref, $chunk_id) = @_;
+         my $ret = '';
+
+         foreach my $row (@{ $chunk_ref }) {
+            $ret .= $row->[$i_color] .": ". $row->[$i_desc] ."\n";
+         }
+
+         MCE->print($ret);
+      }
+   );
+
+   MCE->run();
 
 There are many modules on CPAN which return an iterator reference. Below
 showing one such example. The demonstration ensures MCE workers are spawned
@@ -740,8 +797,10 @@ The user_begin and user_end options, if specified, behave similarly to
 awk 'BEGIN { ... } { ... } END { ... }'. These are called once per each
 worker during a run.
 
+MCE 1.510 passes 2 additional parameters ($task_id and $task_name).
+
    sub user_begin {                   ## Called once at the beginning
-      my $self = shift;
+      my ($self, $task_id, $task_name) = @_;
       $self->{wk_total_rows} = 0;
    }
 
@@ -751,7 +810,7 @@ worker during a run.
    }
 
    sub user_end {                     ## Called once at the end
-      my $self = shift;
+      my ($self, $task_id, $task_name) = @_;
       printf "## %d: Processed %d rows\n",
          MCE->wid(), $self->{wk_total_rows};
    }

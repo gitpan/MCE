@@ -11,7 +11,7 @@
 
 package MCE::Core::Input::Handle;
 
-our $VERSION = '1.509'; $VERSION = eval $VERSION;
+our $VERSION = '1.510'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -49,11 +49,12 @@ sub _worker_read_handle {
    my $_QUE_W_SOCK  = $self->{_que_w_sock};
    my $_chunk_size  = $self->{chunk_size};
    my $_use_slurpio = $self->{use_slurpio};
+   my $_parallel_io = $self->{parallel_io};
    my $_RS          = $self->{RS} || $/;
    my $_RS_FLG      = (!$_RS || $_RS ne $LF);
    my $_wuf         = $self->{_wuf};
 
-   my ($_data_size, $_next, $_chunk_id, $_offset_pos, $_IN_FILE);
+   my ($_data_size, $_next, $_chunk_id, $_offset_pos, $_IN_FILE, $_tmp_cs);
    my @_records = (); $_chunk_id = $_offset_pos = 0;
 
    $_data_size = ($_proc_type == READ_MEMORY)
@@ -96,6 +97,7 @@ sub _worker_read_handle {
       if ($_chunk_size <= MAX_RECS_SIZE) {        ## One or many records.
          local $/ = $_RS if ($_RS_FLG);
          seek $_IN_FILE, $_offset_pos, 0;
+
          if ($_chunk_size == 1) {
             $_buffer = <$_IN_FILE>;
          }
@@ -113,29 +115,77 @@ sub _worker_read_handle {
                }
             }
          }
+
+         syswrite $_QUE_W_SOCK,
+            pack($_que_template, $_chunk_id, tell $_IN_FILE);
       }
       else {                                      ## Large chunk.
          local $/ = $_RS if ($_RS_FLG);
+
          if ($_proc_type == READ_MEMORY) {
-            seek $_IN_FILE, $_offset_pos, 0;
-            if (read($_IN_FILE, $_buffer, $_chunk_size) == $_chunk_size) {
-               $_buffer .= <$_IN_FILE>;
+            if ($_parallel_io) {
+               syswrite $_QUE_W_SOCK,
+                  pack($_que_template, $_chunk_id, $_offset_pos + $_chunk_size);
+
+               $_tmp_cs = $_chunk_size;
+               seek $_IN_FILE, $_offset_pos, 0;
+
+               if ($_offset_pos) {
+                  $_tmp_cs -= length <$_IN_FILE> || 0;
+               }
+
+               if (read($_IN_FILE, $_buffer, $_tmp_cs) == $_tmp_cs) {
+                  $_buffer .= <$_IN_FILE>;
+               }
+            }
+            else {
+               seek $_IN_FILE, $_offset_pos, 0;
+
+               if (read($_IN_FILE, $_buffer, $_chunk_size) == $_chunk_size) {
+                  $_buffer .= <$_IN_FILE>;
+               }
+
+               syswrite $_QUE_W_SOCK,
+                  pack($_que_template, $_chunk_id, tell $_IN_FILE);
             }
          }
          else {
-            sysseek $_IN_FILE, $_offset_pos, 0;
-            if (sysread($_IN_FILE, $_buffer, $_chunk_size) == $_chunk_size) {
-               seek $_IN_FILE, sysseek($_IN_FILE, 0, 1), 0;
-               $_buffer .= <$_IN_FILE>;
+            if ($_parallel_io) {
+               syswrite $_QUE_W_SOCK,
+                  pack($_que_template, $_chunk_id, $_offset_pos + $_chunk_size);
+
+               $_tmp_cs = $_chunk_size;
+
+               if ($_offset_pos) {
+                  seek $_IN_FILE, $_offset_pos, 0;
+                  $_tmp_cs -= length <$_IN_FILE> || 0;
+                  sysseek $_IN_FILE, tell $_IN_FILE, 0;
+               }
+               else {
+                  sysseek $_IN_FILE, $_offset_pos, 0;
+               }
+
+               if (sysread($_IN_FILE, $_buffer, $_tmp_cs) == $_tmp_cs) {
+                  seek $_IN_FILE, sysseek($_IN_FILE, 0, 1), 0;
+                  $_buffer .= <$_IN_FILE>;
+               }
             }
             else {
-               seek $_IN_FILE, sysseek($_IN_FILE, 0, 1), 0;
+               sysseek $_IN_FILE, $_offset_pos, 0;
+
+               if (sysread($_IN_FILE, $_buffer, $_chunk_size) == $_chunk_size) {
+                  seek $_IN_FILE, sysseek($_IN_FILE, 0, 1), 0;
+                  $_buffer .= <$_IN_FILE>;
+               }
+               else {
+                  seek $_IN_FILE, sysseek($_IN_FILE, 0, 1), 0;
+               }
+
+               syswrite $_QUE_W_SOCK,
+                  pack($_que_template, $_chunk_id, tell $_IN_FILE);
             }
          }
       }
-
-      ## Append the next offset position into the queue.
-      syswrite $_QUE_W_SOCK, pack($_que_template, $_chunk_id, tell $_IN_FILE);
 
       ## Call user function.
       if ($_use_slurpio) {

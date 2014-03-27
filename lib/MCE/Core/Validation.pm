@@ -11,7 +11,7 @@
 
 package MCE::Core::Validation;
 
-our $VERSION = '1.509'; $VERSION = eval $VERSION;
+our $VERSION = '1.510'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -46,6 +46,8 @@ sub _validate_args {
 
    _croak("$_tag: 'use_slurpio' is not 0 or 1")
       if ($_s->{use_slurpio} && $_s->{use_slurpio} !~ /\A[01]\z/);
+   _croak("$_tag: 'parallel_io' is not 0 or 1")
+      if ($_s->{parallel_io} && $_s->{parallel_io} !~ /\A[01]\z/);
    _croak("$_tag: 'job_delay' is not valid")
       if ($_s->{job_delay} && $_s->{job_delay} !~ /\A[\d\.]+\z/);
    _croak("$_tag: 'spawn_delay' is not valid")

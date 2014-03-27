@@ -11,7 +11,7 @@ use warnings;
 
 use base qw( Exporter );
 
-our $VERSION = '1.509'; $VERSION = eval $VERSION;
+our $VERSION = '1.510'; $VERSION = eval $VERSION;
 
 our @EXPORT_OK = qw( get_ncpu );
 our %EXPORT_TAGS = ( all => \@EXPORT_OK );
@@ -26,15 +26,15 @@ our %EXPORT_TAGS = ( all => \@EXPORT_OK );
 ##
 ###############################################################################
 
-my $g_cpus;
+my $g_ncpu;
 
 sub get_ncpu {
 
-   return $g_cpus if (defined $g_cpus);
+   return $g_ncpu if (defined $g_ncpu);
 
    local $ENV{PATH} = "/usr/sbin:/sbin:/usr/bin:/bin:$ENV{PATH}";
 
-   my $cpus = 1;
+   my $ncpu = 1;
 
    OS_CHECK: {
       local $_ = $^O;
@@ -45,52 +45,52 @@ sub get_ncpu {
              $count = grep /^cpu\d/ => <PROC>;
              close PROC;
          }
-         $cpus = $count if $count;
+         $ncpu = $count if $count;
          last OS_CHECK;
       };
 
       /(?:darwin|.*bsd)/i && do {
          chomp( my @output = `sysctl -n hw.ncpu 2>/dev/null` );
-         $cpus = $output[0] if @output;
+         $ncpu = $output[0] if @output;
          last OS_CHECK;
       };
 
       /aix/i && do {
          my @output = `lsdev -C -c processor -S Available 2>/dev/null`;
-         $cpus = scalar @output if @output;
+         $ncpu = scalar @output if @output;
          last OS_CHECK;
       };
 
       /hp-?ux/i && do {
          my $count = grep /^processor/ => `ioscan -fnkC processor 2>/dev/null`;
-         $cpus = $count if $count;
+         $ncpu = $count if $count;
          last OS_CHECK;
       };
 
       /irix/i && do {
          my @output = grep /\s+processors?$/i => `hinv -c processor 2>/dev/null`;
-         $cpus = (split " ", $output[0])[0] if @output;
+         $ncpu = (split " ", $output[0])[0] if @output;
          last OS_CHECK;
       };
 
       /solaris|sunos|osf/i && do {
          my $count = grep /on-line/ => `psrinfo 2>/dev/null`;
-         $cpus = $count if $count;
+         $ncpu = $count if $count;
          last OS_CHECK;
       };
 
-      /mswin32|cygwin/i && do {
-         $cpus = $ENV{NUMBER_OF_PROCESSORS}
+      /mswin32|mingw|cygwin/i && do {
+         $ncpu = $ENV{NUMBER_OF_PROCESSORS}
             if exists $ENV{NUMBER_OF_PROCESSORS};
          last OS_CHECK;
       };
 
       _croak(
-         "MCE::Util: command failed or unknown operating system\n"
+         "MCE::Util::get_ncpu: command failed or unknown operating system\n"
       );
    }
 
-   return $g_cpus = $cpus;
+   return $g_ncpu = $ncpu;
 }
 
 ###############################################################################
@@ -227,7 +227,7 @@ MCE::Util - Public and private utility functions for Many-core Engine
 
 =head1 VERSION
 
-This document describes MCE::Util version 1.509
+This document describes MCE::Util version 1.510
 
 =head1 SYNOPSIS
 
@@ -242,7 +242,7 @@ is get_ncpu.
 
 Returns the number of available (online/active/enabled) CPUs.
 
- my $cpus = MCE::Util::get_ncpu();
+ my $ncpu = MCE::Util::get_ncpu();
 
 Specifying 'auto' for max_workers calls MCE::Util::get_ncpu automatically.
 

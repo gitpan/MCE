@@ -11,7 +11,7 @@
 
 package MCE::Core::Worker;
 
-our $VERSION = '1.509'; $VERSION = eval $VERSION;
+our $VERSION = '1.510'; $VERSION = eval $VERSION;
 
 ## Items below are folded into MCE.
 
@@ -340,6 +340,7 @@ sub _worker_do {
    $self->{_run_mode}   = $_params_ref->{_run_mode};
    $self->{_single_dim} = $_params_ref->{_single_dim};
    $self->{use_slurpio} = $_params_ref->{_use_slurpio};
+   $self->{parallel_io} = $_params_ref->{_parallel_io};
    $self->{RS}          = $_params_ref->{_RS};
 
    _do_user_func_init($self);
@@ -352,6 +353,7 @@ sub _worker_do {
    my $_lock_chn   = $self->{_lock_chn};
    my $_run_mode   = $self->{_run_mode};
    my $_task_id    = $self->{_task_id};
+   my $_task_name  = $self->{task_name};
 
    ## Do not override params if defined in user_tasks during instantiation.
    for (qw(bounds_only chunk_size interval sequence user_args)) {
@@ -379,7 +381,7 @@ sub _worker_do {
    }
 
    ## Call user_begin if defined.
-   $self->{user_begin}($self)
+   $self->{user_begin}($self, $_task_id, $_task_name)
       if (defined $self->{user_begin});
 
    ## Call worker function.
@@ -428,7 +430,7 @@ sub _worker_do {
    undef $self->{user_data} if (defined $self->{user_data});
 
    ## Call user_end if defined.
-   $self->{user_end}($self)
+   $self->{user_end}($self, $_task_id, $_task_name)
       if (defined $self->{user_end});
 
    $_die_msg = undef;
