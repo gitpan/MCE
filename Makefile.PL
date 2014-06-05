@@ -27,14 +27,14 @@ WriteMakefile(
       'Time::HiRes'  => 0
    },
 
-   VERSION        => '1.513',
+   VERSION        => '1.514',
 
    EXE_FILES      => [],
 
    (($ExtUtils::MakeMaker::VERSION lt '6.25') ?
       (PL_FILES => { }) : ()),
 
-   (($ExtUtils::MakeMaker::VERSION ge '6.30') ?
+   (($ExtUtils::MakeMaker::VERSION ge '6.31') ?
       (LICENSE => 'perl') : ()),
 
    (($ExtUtils::MakeMaker::VERSION ge '6.46') ?
@@ -52,9 +52,6 @@ WriteMakefile(
                'bin/mce_grep'
             ]
          },
-         requires => {
-            'perl' => 5.008
-         },
          resources => {
             'homepage'   => 'http://code.google.com/p/many-core-engine-perl/',
             'repository' => 'http://code.google.com/p/many-core-engine-perl/',
@@ -63,82 +60,85 @@ WriteMakefile(
          provides => {
             'MCE' => {
                'file'    => 'lib/MCE.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Core::Input::Generator' => {
                'file'    => 'lib/MCE/Core/Input/Generator.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Core::Input::Handle' => {
                'file'    => 'lib/MCE/Core/Input/Handle.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Core::Input::Iterator' => {
                'file'    => 'lib/MCE/Core/Input/Iterator.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Core::Input::Request' => {
                'file'    => 'lib/MCE/Core/Input/Request.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Core::Input::Sequence' => {
                'file'    => 'lib/MCE/Core/Input/Sequence.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Core::Manager' => {
                'file'    => 'lib/MCE/Core/Manager.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Core::Validation' => {
                'file'    => 'lib/MCE/Core/Validation.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Core::Worker' => {
                'file'    => 'lib/MCE/Core/Worker.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Flow' => {
                'file'    => 'lib/MCE/Flow.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Grep' => {
                'file'    => 'lib/MCE/Grep.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Loop' => {
                'file'    => 'lib/MCE/Loop.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Map' => {
                'file'    => 'lib/MCE/Map.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Queue' => {
                'file'    => 'lib/MCE/Queue.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Signal' => {
                'file'    => 'lib/MCE/Signal.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Step' => {
                'file'    => 'lib/MCE/Step.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Stream' => {
                'file'    => 'lib/MCE/Stream.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Subs' => {
                'file'    => 'lib/MCE/Subs.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             },
             'MCE::Util' => {
                'file'    => 'lib/MCE/Util.pm',
-               'version' => '1.513'
+               'version' => '1.514'
             }
          }
       }) : ()),
+
+   (($ExtUtils::MakeMaker::VERSION ge '6.48') ?
+      (MIN_PERL_VERSION => 5.008) : ()),
 
    INSTALLDIRS => (($] < 5.011) ? 'perl' : 'site')
 );
