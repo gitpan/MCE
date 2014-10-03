@@ -6,6 +6,12 @@ alphabetical order by last name.
  # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * # * #
 ###############################################################################
 
+George Bouras
+  For reporting sockets failing under the Windows enviroment due to a
+  period of inactivity. An example is when workers execute an external
+  command taking beyond 4 minutes to complete. On returning, the sockets
+  have gone stale with a CPU core going 100% at this point.
+
 David Cantrell (DrHyde on perlmonks.org)
   For reporting on MCE hanging with cpan -t MCE under his environment. Also,
   thank you for providing me a guest account. I was able to reproduce the
@@ -17,10 +23,10 @@ Eric Collet
   * I first learned of tre-agrep from Eric. He emailed me running times for
     a couple scenarios utilizing a single core. Thus increasing the need to
     have a MCE-driven wrapper script to run tre-agrep.
-  * The bin/mce_grep script was created to show folks how one could go about
-    about chunking data between Perl and an external C binary in an efficient
-    manner without invoking the shell. The script supports grep, egrep, fgrep,
-    agrep and tre-agrep.
+  * The bin/mce_grep script was created to show folks how one may go about
+    chunking data between Perl and an external C binary efficiently without
+    invoking the shell. The script supports grep, egrep, fgrep, agrep and
+    tre-agrep.
 
 Oliver Gorwits
   For reporting on a couple issues with MCE along with a solution for each.
@@ -59,7 +65,7 @@ Joseph Ogulin
   For providing the initial perl-MCE.spec file.
 
 Jillian Rowe
-  For reporting on IO::???? file handles not working with MCE. Fixed in 1.515.
+  For reporting on IO::File handles not working with MCE. Fixed in 1.515.
 
 Sylvia Roy
   For driving on long trips while I worked in the passenger seat further
@@ -67,6 +73,10 @@ Sylvia Roy
 
 Tom Sasser
   For reporting bin/mce_grep failing with Perl 5.8.x.
+
+Florian Schlichting
+  For making a Debian package for MCE.
+  http://pkgs.org/search/libmce-perl
 
 Adam Sjøgren
   For reporting on running /usr/bin/time mce_script.pl and pressing Ctrl-C
@@ -77,10 +87,6 @@ Adam Sjøgren
   
     use MCE::Signal qw(-no_setpgrp);
     use MCE;
-
-Florian Schlichting
-  For making a Debian package for MCE.
-  http://pkgs.org/search/libmce-perl
 
 Marcus Smith
   For reporting a problem with MCE including a sample script demonstrating
