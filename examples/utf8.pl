@@ -8,8 +8,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
 
 use MCE::Loop chunk_size => 'auto', max_workers => 'auto';
 
@@ -38,7 +38,9 @@ print "\n";
 MCE::Loop::init { gather => sub { print shift() } };
 
 sub callback {
-   print $_[0];
+   my ($msg) = @_;
+   print $msg;
+   return;
 }
 
 mce_loop {

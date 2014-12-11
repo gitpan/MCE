@@ -21,8 +21,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -73,7 +73,7 @@ my $mce = MCE->new(
 
 ## Use $chunk_ref->[0] or $_ to retrieve the single element.
 
-my $start = time();
+my $start = time;
 
 $mce->foreach( \@input_data, sub {
    my ($mce, $chunk_ref, $chunk_id) = @_;
@@ -81,7 +81,7 @@ $mce->foreach( \@input_data, sub {
    MCE->gather($result, $chunk_id);
 });
 
-my $end = time();
+my $end = time;
 
 printf STDERR "\n## Compute time: %0.03f\n\n", $end - $start;
 

@@ -8,8 +8,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -125,6 +125,7 @@ my $exit_status = 0;
 
 sub failed_callback {
    $exit_status = 1;
+   return;
 }
 
 my $mce = MCE->new(

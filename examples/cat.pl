@@ -4,7 +4,7 @@
 ## Cat script similar to the cat binary.
 ##
 ## The logic below only supports -n -u options. The focus is demonstrating
-## Many-core Engine for Perl.
+## Many-Core Engine for Perl.
 ##
 ## This script was created to show how order can be preserved even though there
 ## are only 4 shared socket pairs in MCE no matter the number of workers.
@@ -19,8 +19,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -149,7 +149,7 @@ while ( my $arg = shift @ARGV ) {
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
-## Launch Many-core Engine.
+## Launch Many-Core Engine.
 ##
 ###############################################################################
 
@@ -168,7 +168,7 @@ my $mce = MCE->new(
 
 )->spawn;
 
-$| = 1 if $u_flag;
+local $| = 1 if $u_flag;
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
@@ -218,7 +218,7 @@ if (@files > 0) {
    foreach my $file (@files) {
       $order_id = 1; $lines = 0;
       if ($file eq '-') {
-         open(STDIN, ($^O eq 'MSWin32') ? 'CON' : '/dev/tty') or die $!;
+         open(STDIN, '<', ($^O eq 'MSWin32') ? 'CON' : '/dev/tty') or die $!;
          $mce->process(\*STDIN);
       }
       elsif (! -e $file) {
@@ -239,7 +239,7 @@ else {
    $mce->process(\*STDIN);
 }
 
-## Shutdown Many-core Engine and exit.
+## Shutdown Many-Core Engine and exit.
 
 $mce->shutdown();
 exit $exit_status;

@@ -3,68 +3,63 @@
 use strict;
 use warnings;
 
-BEGIN {
-   eval 'use threads; use threads::shared;' if $^O eq 'MSWin32';
-}
-
 use Test::More tests => 5;
 
 use MCE;
 
-my (@ans, @rpl, %hsh, $mce);
+my (@ans, @rpl, $mce);
 
 ###############################################################################
 
 sub callback {
-   push @ans, $_[0];
+   my ($wid) = @_;
+   push @ans, $wid;
    return;
 }
 
 $mce = MCE->new(
-   use_threads => ($^O eq 'MSWin32') ? 1 : 0,
-   spawn_delay => 0.2,
    max_workers => 4,
 
    user_func => sub {
-      my ($self) = @_;
-      $self->do('callback', $self->wid());
+      MCE->do('callback', MCE->wid());
+      return;
    }
 );
 
 @ans = ();
 $mce->run;
 
-is(join('', sort @ans), '1234', 'check that wid is correct for children');
+is(join('', sort @ans), '1234', 'test1: check that wid is correct');
 
 ###############################################################################
 
 sub callback2 {
-   push @ans, $_[0];
-   return $_[0] * 2;
+   my ($wid) = @_;
+   push @ans, $wid;
+   return $wid * 2;
 }
 
 sub callback3 {
-   push @rpl, $_[0];
+   my ($ans) = @_;
+   push @rpl, $ans;
    return;
 }
 
 $mce = MCE->new(
-   use_threads => ($^O eq 'MSWin32') ? 1 : 0,
-   spawn_delay => 0.2,
    max_workers => 4,
 
    user_func => sub {
-      my ($self) = @_;
-      my $reply  = $self->do('callback2', $self->wid());
-      $self->do('callback3', $reply);
+      my $reply = MCE->do('callback2', MCE->wid());
+      MCE->do('callback3', $reply);
+      return;
    }
 );
 
 @ans = (); @rpl = ();
 $mce->run;
 
-is(join('', sort @ans), '1234', 'check that wid is correct for threads');
-is(join('', sort @rpl), '2468', 'check that scalar is correct');
+is(join('', sort @ans), '1234', 'test2: check that wid is correct');
+is(join('', sort @rpl), '2468', 'test3: check that scalar is correct');
 
 ###############################################################################
 
@@ -73,7 +68,7 @@ sub callback4 {
 }
 
 sub callback5 {
-   my $a_ref = $_[0];
+   my ($a_ref) = @_;
    my %h = ();
 
    @ans = ();
@@ -87,9 +82,9 @@ sub callback5 {
 }
 
 sub callback6 {
-   my $h_ref = $_[0];
+   my ($h_ref) = @_;
 
-   @rpl = (); 
+   @rpl = ();
 
    foreach (sort keys %{ $h_ref }) {
       $rpl[$_ - 1] = $h_ref->{$_};
@@ -99,20 +94,20 @@ sub callback6 {
 }
 
 $mce = MCE->new(
-   use_threads => ($^O eq 'MSWin32') ? 1 : 0,
-   spawn_delay => 0.2,
    max_workers => 1,
 
    user_func => sub {
-      my ($self) = @_;
-      my @reply  = $self->do('callback4');
-      my %reply  = $self->do('callback5', \@reply);
-      $self->do('callback6', \%reply);
+      my @reply = MCE->do('callback4');
+      my %reply = MCE->do('callback5', \@reply);
+
+      MCE->do('callback6', \%reply);
+
+      return;
    }
 );
 
 $mce->run;
 
-is(join('', sort @ans), '1234', 'check that list is correct');
-is(join('', sort @rpl), '2468', 'check that hash is correct');
+is(join('', sort @ans), '1234', 'test4: check that list is correct');
+is(join('', sort @rpl), '2468', 'test5: check that hash is correct');
 

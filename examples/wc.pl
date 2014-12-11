@@ -4,7 +4,7 @@
 ## Word count script similar to the wc binary.
 ##
 ## The logic below does not support multi-byte characters. The focus is
-## demonstrating Many-core Engine for Perl. Use this script for large
+## demonstrating Many-Core Engine for Perl. Use this script for large
 ## file(s).
 ##
 ## The usage description was largely ripped off from the wc man page.
@@ -14,8 +14,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -162,7 +162,7 @@ if (defined $wc_cmd && ($l_flag || $w_flag)) {
 
 ###############################################################################
 ## ----------------------------------------------------------------------------
-## Configure Many-core Engine.
+## Configure Many-Core Engine.
 ##
 ###############################################################################
 
@@ -263,7 +263,7 @@ sub user_end {
    return;
 }
 
-## Instantiate Many-core Engine and spawn workers.
+## Instantiate Many-Core Engine and spawn workers.
 
 my $mce = MCE->new(
    user_begin  => \&user_begin,          ## Called prior to chunking
@@ -346,7 +346,7 @@ else {
    display_result($f_lines, $f_words, $f_bytes);
 }
 
-## Shutdown Many-core Engine and exit.
+## Shutdown Many-Core Engine and exit.
 
 $mce->shutdown();
 exit $exit_status;

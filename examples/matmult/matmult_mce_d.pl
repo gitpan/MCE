@@ -2,15 +2,15 @@
 
 ##
 ## Usage:
-##    perl matmult_mce_d.pl 1024 [ N_workers ]     ## Default matrix size 512
-##                                                 ## Default N_workers 8
+##    perl matmult_mce_d.pl 1024 [ n_workers ]     ## Default matrix size 512
+##                                                 ## Default n_workers 8
 ##
 
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../../lib') =~ /(.*)/;
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -37,7 +37,7 @@ if ($^O eq 'MSWin32' && $pdl_version lt $chk_version) {
 ###############################################################################
 
 my $tam = @ARGV ? shift : 512;
-my $N_workers = @ARGV ? shift : 8;
+my $n_workers = @ARGV ? shift : 8;
 
 if ($tam !~ /^\d+$/ || $tam < 2) {
    die "error: $tam must be an integer greater than 1.\n";
@@ -48,7 +48,7 @@ my $rows = $tam;
 
 my $step_size = ($tam > 2048) ? 24 : ($tam > 1024) ? 16 : 8;
 
-my $mce = configure_and_spawn_mce($N_workers);
+my $mce = configure_and_spawn_mce($n_workers);
 
 my $a = sequence $cols,$rows;
 my $b = sequence $rows,$cols;
@@ -56,14 +56,14 @@ my $c = zeroes   $rows,$rows;
 
 writefraw($b, "$tmp_dir/b");
 
-my $start = time();
+my $start = time;
 
 $mce->run(0, {
    sequence  => [ 0, $rows - 1, $step_size ],
    user_args => { b => "$tmp_dir/b" }
 } );
 
-my $end = time();
+my $end = time;
 
 $mce->shutdown();
 
@@ -83,7 +83,7 @@ print "\n";
 
 sub get_rows_a {
 
-   my $start = $_[0];
+   my ($start) = @_;
    my $stop  = $start + $step_size - 1;
 
    $stop = $rows - 1 if ($stop >= $rows);
@@ -93,18 +93,20 @@ sub get_rows_a {
 
 sub insert_rows {
 
-   ins(inplace($c), $_[1], 0, $_[0]);
+   my ($seq_n, $result_chunk) = @_;
+
+   ins(inplace($c), $result_chunk, 0, $seq_n);
 
    return;
 }
 
 sub configure_and_spawn_mce {
 
-   my $N_workers = shift || 8;
+   my $n_workers = shift || 8;
 
    return MCE->new(
 
-      max_workers => $N_workers,
+      max_workers => $n_workers,
       job_delay   => ($tam > 2048) ? 0.031 : undef,
 
       user_begin  => sub {

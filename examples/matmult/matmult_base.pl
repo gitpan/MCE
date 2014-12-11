@@ -8,8 +8,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../../lib') =~ /(.*)/;
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -33,9 +33,9 @@ my $rows = $tam;
 my $a = sequence $cols,$rows;
 my $b = sequence $rows,$cols;
 
-my $start = time();
+my $start = time;
 my $c = $a x $b;                         ## Performs matrix multiplication
-my $end = time();
+my $end = time;
 
 ## Print results -- use same pairs to match David Mertens' output.
 printf "\n## $prog_name $tam: compute time: %0.03f secs\n\n", $end - $start;

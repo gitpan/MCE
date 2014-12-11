@@ -180,6 +180,8 @@ sub output {
    }
 
    unlink $file;
+
+   return;
 }
 
 sub gather_iterator {

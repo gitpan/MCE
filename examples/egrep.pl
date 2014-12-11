@@ -5,7 +5,7 @@
 ## Look at bin/mce_grep for a wrapper script around the grep binary.
 ##
 ## This script supports egrep's options [ceHhiLlmnqRrsv]. The focus is
-## demonstrating Many-core Engine for Perl. Use this script against large
+## demonstrating Many-Core Engine for Perl. Use this script against large
 ## file(s).
 ##
 ## This script was created to show how output order can be preserved even
@@ -29,8 +29,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
 
 my ($prog_name, $prog_dir);
 
@@ -60,11 +60,13 @@ use MCE;
 
 sub usage {
 
-   my $exit_status = $_[0] || 0;
+   my ($exit_status) = @_;
+   
+   $exit_status = 0 unless defined $exit_status;
 
    print <<"::_USAGE_BLOCK_END_::";
 
-Options for Many-core Engine:
+Options for Many-Core Engine:
   --max-workers=NUM         override max workers (default 6)
                               e.g. auto, auto-2, 4
 
@@ -375,6 +377,8 @@ sub display_result {
       delete $result{$order_id};
       $order_id++;
    }
+
+   return;
 }
 
 sub report_match {
@@ -564,10 +568,10 @@ sub display_matched {
 
 sub process_file {
 
-   $file = $_[0];
+   ($file) = @_;
 
    if ($file eq '-') {
-      open(STDIN, ($^O eq 'MSWin32') ? 'CON' : '/dev/tty') or die $!;
+      open(STDIN, '<', ($^O eq 'MSWin32') ? 'CON' : '/dev/tty') or die $!;
       process_stdin();
    }
    elsif (! -e $file) {

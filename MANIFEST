@@ -35,6 +35,7 @@ examples/files_flow.pl
 examples/files_mce.pl
 examples/files_thr.pl
 examples/findnull.pl
+examples/flow_demo.pl
 examples/flow_model.pl
 examples/forchunk.pl
 examples/foreach.pl
@@ -85,4 +86,19 @@ t/01_load_signal_tag.t
 t/02_do_callback_args.t
 t/02_do_callback_result.t
 t/03_chunk_size.t
+t/03_user_args.t
+t/04_norm_que_local.t
+t/04_norm_que_manager.t
+t/04_norm_que_worker.t
+t/04_prio_que_local.t
+t/04_prio_que_manager.t
+t/04_prio_que_worker.t
+t/05_mce_flow.t
+t/05_mce_grep.t
+t/05_mce_loop.t
+t/05_mce_map.t
+t/05_mce_step.t
+t/05_mce_stream.t
+t/06_nodata_flow.t
+t/06_nodata_step.t
 META.yml

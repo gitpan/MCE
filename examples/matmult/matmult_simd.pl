@@ -20,8 +20,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../../lib') =~ /(.*)/;
  
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
  
@@ -52,7 +52,7 @@ my $N_threads = @ARGV ? shift : 8;
 # Run the calculation in parallel #
 ###################################
  
-my $start = time();
+my $start = time;
 parallelize {
 	my ($l, $r, $o) = retrieve_pdls('left_input', 'right_input', 'output');
 	my $pid = parallel_id;
@@ -68,7 +68,7 @@ parallelize {
  	$o(:, $start:$stop) .= $l(:,$start:$stop) x $r;
  	no PDL::NiceSlice;
 } $N_threads;
-my $end = time();
+my $end = time;
  
 #########################
 # Print results #

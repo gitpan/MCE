@@ -9,8 +9,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
 
 use MCE;
 
@@ -27,6 +27,8 @@ sub user_func {
 
    MCE->sendto("STDOUT", "c: $wid\n");
    MCE->sync;
+
+   return;
 }
 
 my $mce = MCE->new(

@@ -25,8 +25,8 @@
 use strict;
 use warnings;
 
-use Cwd qw(abs_path);
-use lib abs_path . "/../lib";
+use Cwd 'abs_path';  ## Remove taintedness from path
+use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -90,7 +90,7 @@ my $seq = {
    format => $s_format
 };
 
-my $start = time();
+my $start = time;
 
 $mce->forseq( $seq, sub {
    my ($mce, $n, $chunk_id) = @_;
@@ -98,7 +98,7 @@ $mce->forseq( $seq, sub {
    MCE->gather($n, $result, $chunk_id);
 });
 
-my $end = time();
+my $end = time;
 
 printf STDERR "\n## Compute time: %0.03f\n\n", $end - $start;
 
