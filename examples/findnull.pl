@@ -23,8 +23,8 @@
 use strict;
 use warnings;
 
-use Cwd 'abs_path';  ## Remove taintedness from path
-use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../lib';
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -167,7 +167,7 @@ sub user_func {
       1 while (<$_MEM_FH>);
    }
 
-   ## All workers report the last line count read irregardless on
+   ## All workers report the last line count read regardless on
    ## whether matching lines were found. The reason is that other
    ## workers may find matching lines and the callback function
    ## needs to accurately report line numbers.
@@ -180,7 +180,7 @@ sub user_func {
       'lines' => \@lines
    );
 
-   MCE->gather(\%result, $chunk_id);
+   MCE->gather($chunk_id, \%result);
 
    return;
 }
@@ -195,12 +195,12 @@ sub user_func {
 
 my $total_lines = 0;
 
-sub output_iterator {
+sub preserve_order {
    my %tmp; my $order_id = 1;
 
    return sub {
-      my ($result, $chunk_id) = @_;
-      $tmp{$chunk_id} = $result;
+      my ($chunk_id, $data_ref) = @_;
+      $tmp{$chunk_id} = $data_ref;
 
       while (1) {
          last unless exists $tmp{$order_id};
@@ -209,7 +209,7 @@ sub output_iterator {
          if ($r->{found_match}) {
             for (@{ $r->{lines} }) {
                $e = "NULL value at line " . ($_ + $total_lines) . " in $file";
-               print STDERR "Warning: ", $e, "\n";
+               print {*STDERR} "Warning: ", $e, "\n";
             }
          }
 
@@ -223,11 +223,11 @@ sub output_iterator {
 
 my $mce = MCE->new(
    chunk_size => $chunk_size, max_workers => $max_workers,
-   input_data => $file, gather => output_iterator(),
+   input_data => $file, gather => preserve_order,
    user_func => \&user_func, use_slurpio => 1
 );
 
-$mce->run();
+$mce->run;
 
 print "$total_lines $file\n" if ($l_flag);
 

@@ -3,7 +3,7 @@
 ## ----------------------------------------------------------------------------
 ## This example demonstrates the "interval" option in MCE.
 ##
-## usage: interval.pl [ delay ]   ## Default is 0.100
+## usage: interval.pl [ delay ]   ## Default is 0.1
 ##        interval.pl   0.005
 ##        interval.pl   1.000
 ##
@@ -12,15 +12,15 @@
 use strict;
 use warnings;
 
-use Cwd 'abs_path';  ## Remove taintedness from path
-use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../lib';
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
-use Time::HiRes qw(time);
+use Time::HiRes 'time';
 use MCE;
 
-my $d = shift || 0.100;
+my $d = shift || 0.1;
 
 local $| = 1;
 
@@ -46,7 +46,7 @@ sub create_task {
 
 sub user_begin {
 
-   my ($mce) = @_;
+   my ($mce, $task_id, $task_name) = @_;
 
    ## The yield method causes this worker to wait for its next
    ## time interval slot before running. Yield has no effect
@@ -58,9 +58,9 @@ sub user_begin {
 
    MCE->yield;
 
-   MCE->sendto( "STDOUT",
-      sprintf("Node %2d: %0.5f -- Worker %2d: %12s -- Started\n",
-         MCE->task_id + 1, time, MCE->task_wid, '')
+   MCE->printf(
+      "Node %2d: %0.5f -- Worker %2d: %12s -- Started\n",
+      MCE->task_id + 1, time, MCE->task_wid, ''
    );
 
    return;
@@ -82,9 +82,9 @@ sub user_begin {
 
       $prev_time = $curr_time;
 
-      MCE->sendto( "STDOUT",
-         sprintf("Node %2d: %0.5f -- Worker %2d: %12.5f -- Seq_N %3d\n",
-            MCE->task_id + 1, time, MCE->task_wid, $time_waited, $seq_n)
+      MCE->printf(
+         "Node %2d: %0.5f -- Worker %2d: %12.5f -- Seq_N %3d\n",
+         MCE->task_id + 1, time, MCE->task_wid, $time_waited, $seq_n
       );
 
       return;

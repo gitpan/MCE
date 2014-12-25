@@ -19,8 +19,8 @@
 use strict;
 use warnings;
 
-use Cwd 'abs_path';  ## Remove taintedness from path
-use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../lib';
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -181,6 +181,11 @@ my $exit_status = 0;
 
 sub display_chunk {
 
+   ## One can have this receive 2 arguments; $chunk_id and $chunk_data.
+   ## However, I want the least overhead between worker and the manager
+   ## process. MCE->freeze is called when more than 1 argument is sent.
+   ## Thus, the reason for receiving $chunk_id at the end of $_[0].
+
    my $chunk_id = substr($_[0], rindex($_[0], ':') + 1);
 
    chop $_[0] for (1 .. length($chunk_id) + 1);
@@ -195,8 +200,7 @@ sub display_chunk {
          printf "%6d\t%s", ++$lines, $_ while (<$fh>);
          close $fh;
 
-         delete $result{$order_id};
-         $order_id++;
+         delete $result{$order_id++};
       }
    }
    else {
@@ -204,8 +208,7 @@ sub display_chunk {
          last unless exists $result{$order_id};
 
          print $result{$order_id};
-         delete $result{$order_id};
-         $order_id++;
+         delete $result{$order_id++};
       }
    }
 
@@ -222,11 +225,11 @@ if (@files > 0) {
          $mce->process(\*STDIN);
       }
       elsif (! -e $file) {
-         print STDERR "$prog_name: $file: No such file or directory\n";
+         print {*STDERR} "$prog_name: $file: No such file or directory\n";
          $exit_status = 2;
       }
       elsif (-d $file) {
-         print STDERR "$prog_name: $file: Is a directory\n";
+         print {*STDERR} "$prog_name: $file: Is a directory\n";
          $exit_status = 1;
       }
       else {
@@ -241,6 +244,6 @@ else {
 
 ## Shutdown Many-Core Engine and exit.
 
-$mce->shutdown();
+$mce->shutdown;
 exit $exit_status;
 

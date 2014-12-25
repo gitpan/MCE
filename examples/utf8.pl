@@ -8,8 +8,8 @@
 use strict;
 use warnings;
 
-use Cwd 'abs_path';  ## Remove taintedness from path
-use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../lib';
 
 use MCE::Loop chunk_size => 'auto', max_workers => 'auto';
 
@@ -24,8 +24,8 @@ use open qw(:utf8 :std);
 
 ## Iterate over @list and output to STDOUT three times:
 ## - Once from a normal for-loop,
-## - Once after fetching results from MCE->do()
-## - Once after fetching results from MCE->gather()
+## - Once after fetching results from MCE->do
+## - Once after fetching results from MCE->gather
 
 ## Some Unicode characters from Basic Latin, Latin-1, and beyond.
 ## my @list = (qw(U Ö Å Ǣ Ȝ), "\N{INTERROBANG}");
@@ -44,13 +44,13 @@ sub callback {
 }
 
 mce_loop {
-   my $wid = MCE->wid();
+   my $wid = MCE->wid;
 
    for (@{ $_ }) {
       MCE->do("callback", "$wid: MCE->do: $_\n");
    }
 
-   MCE->sync();
+   MCE->sync;
 
    for (@{ $_ }) {
       MCE->gather("$wid: MCE->gather: $_\n");
@@ -71,7 +71,7 @@ my $unicode = join("\n", @list) . "\n";
 MCE::Loop::init { chunk_size => 1 };
 
 mce_loop_f {
-   my $wid = MCE->wid();
+   my $wid = MCE->wid;
    MCE->print("$wid: MCE->print: $_");
 
 } \$unicode;

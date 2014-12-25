@@ -9,8 +9,8 @@
 use strict;
 use warnings;
 
-use Cwd 'abs_path';  ## Remove taintedness from path
-use lib ($_) = (abs_path().'/../../lib') =~ /(.*)/;
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../../lib';
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -65,7 +65,7 @@ $mce->run(0, {
 
 my $end = time;
 
-$mce->shutdown();
+$mce->shutdown;
 
 ## Print results -- use same pairs to match David Mertens' output.
 printf "\n## $prog_name $tam: compute time: %0.03f secs\n\n", $end - $start;

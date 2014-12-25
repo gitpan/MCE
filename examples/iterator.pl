@@ -19,22 +19,21 @@
 use strict;
 use warnings;
 
-use Cwd 'abs_path';  ## Remove taintedness from path
-use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
-
-my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../lib';
 
 use Time::HiRes qw(time);
 use MCE;
 
-my $s_begin  = shift || 3000;
-my $s_end    = shift;
-my $s_step   = shift || 1;
-my $s_format = shift;
+my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
+my $s_begin   = shift || 3000;
+my $s_end     = shift;
+my $s_step    = shift || 1;
+my $s_format  = shift;
 
 if ($s_begin !~ /\A\d*\.?\d*\z/) {
-   print STDERR "usage: $prog_name [ size ]\n";
-   print STDERR "usage: $prog_name [ begin end [ step [ format ] ] ]\n";
+   print {*STDERR} "usage: $prog_name [ size ]\n";
+   print {*STDERR} "usage: $prog_name [ begin end [ step [ format ] ] ]\n";
    exit;
 }
 
@@ -77,12 +76,14 @@ sub input_iterator {
 ## The external variables keep their state across successive calls to the
 ## closure.
 
-sub output_iterator {
+sub preserve_order {
    my (%result_n, %result_d); my $order_id = 1;
 
    return sub {
-      $result_n{ $_[2] } = $_[0];
-      $result_d{ $_[2] } = $_[1];
+      my ($chunk_id, $n, $data) = @_;
+
+      $result_n{ $chunk_id } = $n;
+      $result_d{ $chunk_id } = $data;
 
       while (1) {
          last unless exists $result_d{$order_id};
@@ -108,17 +109,17 @@ sub output_iterator {
 
 my $mce = MCE->new(
 
-   chunk_size => 1, max_workers => 3, gather => output_iterator(),
+   chunk_size => 1, max_workers => 3, gather => preserve_order,
 
    user_func => sub {
       my ($mce, $chunk_ref, $chunk_id) = @_;
 
       if (defined $s_format) {
          my $n = sprintf "%${s_format}", $_;
-         MCE->gather($n, sqrt($n), $chunk_id);
+         MCE->gather($chunk_id, $n, sqrt($n));
       }
       else {
-         MCE->gather($_, sqrt($_), $chunk_id);
+         MCE->gather($chunk_id, $_, sqrt($_));
       }
    }
 
@@ -130,5 +131,5 @@ $mce->process( input_iterator($s_begin, $s_end, $s_step) );
 
 my $end = time;
 
-printf STDERR "\n## Compute time: %0.03f\n\n", $end - $start;
+printf {*STDERR} "\n## Compute time: %0.03f\n\n", $end - $start;
 

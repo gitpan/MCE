@@ -11,18 +11,16 @@
 use strict;
 use warnings;
 
-my ($prog_name, $prog_dir, $base_dir);
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../lib';
+
+my ($prog_name, $prog_dir);
 
 BEGIN {
-   use Cwd qw(abs_path);
-
    $prog_name = $0;             $prog_name =~ s{^.*[\\/]}{}g;
    $prog_dir  = abs_path($0);   $prog_dir  =~ s{[\\/][^\\/]*$}{};
-   $base_dir  = $prog_dir;      $base_dir  =~ s{[\\/][^\\/]*$}{};
 
    $ENV{PATH} = $prog_dir .($^O eq 'MSWin32' ? ';' : ':'). $ENV{PATH};
-
-   unshift @INC, "$base_dir/lib";
 }
 
 use Getopt::Long qw(
@@ -43,7 +41,7 @@ use MCE::Loop;
 
 sub usage {
 
-   print STDERR <<"::_USAGE_BLOCK_END_::";
+   print {*STDERR} <<"::_USAGE_BLOCK_END_::";
 
 NAME
    $prog_name -- process STDIN or FILE via Perl in parallel
@@ -117,7 +115,7 @@ my $parallel_io  = 0;
 
    if ($max_workers !~ /^auto/) {
       unless (looks_like_number($max_workers) && $max_workers > 0) {
-         print STDERR "$prog_name: $max_workers: invalid max workers\n";
+         print {*STDERR} "$prog_name: $max_workers: invalid max workers\n";
          exit 2;
       }
    }
@@ -131,7 +129,7 @@ my $parallel_io  = 0;
       }
 
       if (!looks_like_number($chunk_size) || $chunk_size < 1) {
-         print STDERR "$prog_name: $chunk_size: invalid chunk size\n";
+         print {*STDERR} "$prog_name: $chunk_size: invalid chunk size\n";
          exit 2;
       }
    }
@@ -143,11 +141,11 @@ my $input = (defined $ARGV[0]) ? $ARGV[0] : \*STDIN;
 
 if (ref $input eq '') {
    if (! -e $input) {
-      print STDERR "$prog_name: $input: No such file or directory\n";
+      print {*STDERR} "$prog_name: $input: No such file or directory\n";
       exit 2;
    }
    if (-d $input) {
-      print STDERR "$prog_name: $input: Is a directory\n";
+      print {*STDERR} "$prog_name: $input: Is a directory\n";
       exit 2;
    }
 }
@@ -187,12 +185,13 @@ sub output {
 sub gather_iterator {
 
    my ($out_fh, $err_fh) = @_;
-   my (%tmp, $path); my $order_id = 1;
+   my %tmp; my $order_id = 1;
 
    return sub {
+      my ($chunk_id, $path, $status) = @_;
 
-      $tmp{$_[0]}  = $_[1]; 
-      $exit_status = $_[2] if ($_[2] > $exit_status);
+      $tmp{$chunk_id} = $path; 
+      $exit_status = $status if ($status > $exit_status);
 
       while (1) {
          last unless exists $tmp{$order_id};
@@ -224,7 +223,7 @@ MCE::Loop::init {
 mce_loop_f {
 
    my ($mce, $chunk_ref, $chunk_id) = @_;
-   my $path = MCE->tmp_dir() .'/'. $chunk_id;
+   my $path = MCE->tmp_dir .'/'. $chunk_id;
    my $chunk_status = 0;
 
    open my $out_fh, ">", "$path.out";
@@ -253,7 +252,7 @@ mce_loop_f {
 ##
 ###############################################################################
 
-MCE::Loop::finish();
+MCE::Loop::finish;
 
 exit $exit_status;
 

@@ -29,17 +29,14 @@
 use strict;
 use warnings;
 
-use Cwd 'abs_path';  ## Remove taintedness from path
-use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../lib';
 
 my ($prog_name, $prog_dir);
 
 BEGIN {
-   $prog_name = $0;
-   $prog_name =~ s{^.*[\\/]}{}g;
-
-   $prog_dir  = abs_path($0);
-   $prog_dir  =~ s{[\\/][^\\/]*$}{};
+   $prog_name = $0;             $prog_name =~ s{^.*[\\/]}{}g;
+   $prog_dir  = abs_path($0);   $prog_dir  =~ s{[\\/][^\\/]*$}{};
 
    $ENV{PATH} .= ($^O eq 'MSWin32' ? ';' : ':') . $prog_dir;
 }
@@ -267,13 +264,13 @@ while ( @ARGV ) {
 {
    if (defined $max_count) {
       unless (looks_like_number($max_count) && $max_count >= 0) {
-         print STDERR "$prog_name: invalid max count\n";
+         print {*STDERR} "$prog_name: invalid max count\n";
          exit 2;
       }
    }
    if ($max_workers !~ /^auto/) {
       unless (looks_like_number($max_workers) && $max_workers > 0) {
-         print STDERR "$prog_name: invalid max workers\n";
+         print {*STDERR} "$prog_name: invalid max workers\n";
          exit 2;
       }
    }
@@ -290,7 +287,7 @@ while ( @ARGV ) {
       $chunk_size =    204_800 if $chunk_size <    204_800;  ## 200K
    }
    else {
-      print STDERR "$prog_name: invalid chunk size\n";
+      print {*STDERR} "$prog_name: invalid chunk size\n";
       exit 2;
    }
 }
@@ -340,7 +337,7 @@ sub aggregate_count {
 
 sub display_result {
 
-   my ($result, $chunk_id) = @_;
+   my ($chunk_id, $result) = @_;
 
    return if ($abort_job);
    $result{$chunk_id} = $result;
@@ -353,7 +350,7 @@ sub display_result {
          $found_match = 1;
 
          if ($q_flag) {
-            MCE->abort(); $abort_all = $abort_job = 1;
+            MCE->abort; $abort_all = $abort_job = 1;
             last;
          }
          for my $i (0 .. @{ $r->{matches} } - 1) {
@@ -366,16 +363,14 @@ sub display_result {
             }
 
             if ($max_count && $max_count == $total_found) {
-               MCE->abort(); $abort_job = 1;
+               MCE->abort; $abort_job = 1;
                last;
             }
          }
       }
 
       $total_lines += $r->{line_count} if ($n_flag);
-
-      delete $result{$order_id};
-      $order_id++;
+      delete $result{$order_id++};
    }
 
    return;
@@ -384,7 +379,7 @@ sub display_result {
 sub report_match {
 
    if (!$abort_job) {
-      MCE->abort();
+      MCE->abort;
       $abort_all = 1 if $q_flag;
       $abort_job = $total_found = 1;
    }
@@ -538,7 +533,7 @@ sub user_func {
       'lines' => \@lines
    );
 
-   MCE->do('display_result', \%result, $chunk_id);
+   MCE->do('display_result', $chunk_id, \%result);
 
    return;
 }
@@ -577,7 +572,7 @@ sub process_file {
    elsif (! -e $file) {
       $exit_status = 2;
 
-      print STDERR "$prog_name: $file: No such file or directory\n"
+      print {*STDERR} "$prog_name: $file: No such file or directory\n"
          unless $no_msg;
    }
    elsif (-d $file) {
@@ -618,12 +613,12 @@ if ($r_flag && @files > 0) {
 
    MCE->spawn;
 
-   unless ($^O eq 'MSWin32') {
-      open $list_fh, '-|', 'egrep', '-lsr', @r_patn, '^', @files;
-   }
-   else {
+   if ($^O eq 'MSWin32') {
       $list = `egrep -lsr @r_patn ^ @files`;
       open $list_fh, '<', \$list;
+   }
+   else {
+      open $list_fh, '-|', 'egrep', '-lsr', @r_patn, '^', @files;
    }
 
    while (<$list_fh>) {
@@ -650,7 +645,7 @@ else {
 ##
 ###############################################################################
 
-MCE->shutdown();
+MCE->shutdown;
 
 if (!$q_flag && $exit_status) {
    exit($exit_status);

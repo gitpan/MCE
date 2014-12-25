@@ -14,8 +14,8 @@
 use strict;
 use warnings;
 
-use Cwd 'abs_path';  ## Remove taintedness from path
-use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../lib';
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -318,11 +318,11 @@ sub display_result {
 if (@files > 0) {
    for my $file (@files) {
       if (! -e $file) {
-         print STDERR "$prog_name: $file: No such file or directory\n";
+         print {*STDERR} "$prog_name: $file: No such file or directory\n";
          $exit_status = 2;
       }
       elsif (-d $file) {
-         print STDERR "$prog_name: $file: Is a directory\n";
+         print {*STDERR} "$prog_name: $file: Is a directory\n";
          $exit_status = 1;
       }
       else {
@@ -348,6 +348,6 @@ else {
 
 ## Shutdown Many-Core Engine and exit.
 
-$mce->shutdown();
+$mce->shutdown;
 exit $exit_status;
 

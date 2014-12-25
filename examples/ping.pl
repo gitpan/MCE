@@ -8,8 +8,8 @@
 use strict;
 use warnings;
 
-use Cwd 'abs_path';  ## Remove taintedness from path
-use lib ($_) = (abs_path().'/../lib') =~ /(.*)/;
+use Cwd 'abs_path'; ## Insert lib-path at the head of @INC.
+use lib abs_path($0 =~ m{^(.*)[\\/]} && $1 || abs_path) . '/../lib';
 
 my $prog_name = $0; $prog_name =~ s{^.*[\\/]}{}g;
 
@@ -136,12 +136,12 @@ my $mce = MCE->new(
    user_begin => sub {
       my ($mce) = @_;
       $mce->{pinger} = Net::Ping->new('syn');
-      $mce->{pinger}->hires();
+      $mce->{pinger}->hires;
    },
 
    user_end => sub {
       my ($mce) = @_;
-      $mce->{pinger}->close();
+      $mce->{pinger}->close;
    },
 
    user_func => sub {
@@ -178,12 +178,12 @@ my $mce = MCE->new(
 
       if (@fail > 0) {
          $mce->do('failed_callback');
-         $mce->sendto('STDOUT', @fail);
+         $mce->print(@fail);
       }
    }
 );
 
-$mce->run();
+$mce->run;
 
 exit $exit_status;
 
